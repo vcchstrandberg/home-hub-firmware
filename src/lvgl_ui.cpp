@@ -196,7 +196,7 @@ static void buildUI() {
   lv_label_set_text(ui.locale_label, "--");
   lv_obj_set_style_text_color(ui.locale_label, lv_color_hex(COL_DETAIL), 0);
   lv_obj_set_style_text_font(ui.locale_label, &lv_font_montserrat_12, 0);
-  lv_obj_align(ui.locale_label, LV_ALIGN_RIGHT_MID, -6, 0);
+  lv_obj_align(ui.locale_label, LV_ALIGN_RIGHT_MID, -10, 0);
 
   // Indoor card (amber accent)
   ui.indoor_card = lv_obj_create(scr);
@@ -404,6 +404,10 @@ void LvglUI::setIndoor(const char* label, const char* humidityLabel,
   snprintf(buf, sizeof(buf), "%.1f", tempDisp);
   lv_label_set_text(ui.indoor_temp, buf);
   lv_label_set_text(ui.indoor_unit, tempUnit ? tempUnit : "");
+  // Re-align unit AFTER the temp text changes — initial alignment was
+  // computed against the placeholder "--" width and would otherwise leave
+  // the unit overlapping the new digits.
+  lv_obj_align_to(ui.indoor_unit, ui.indoor_temp, LV_ALIGN_OUT_RIGHT_BOTTOM, 4, -4);
   String h = stripAccents(humidityLabel) + String(humidity) + "%";
   lv_label_set_text(ui.indoor_humidity, h.c_str());
 }
@@ -417,6 +421,7 @@ void LvglUI::setOutdoor(const char* label, const char* pressureLabel, const char
   snprintf(tbuf, sizeof(tbuf), "%.1f", tempDisp);
   lv_label_set_text(ui.outdoor_temp, tbuf);
   lv_label_set_text(ui.outdoor_unit, tempUnit ? tempUnit : "");
+  lv_obj_align_to(ui.outdoor_unit, ui.outdoor_temp, LV_ALIGN_OUT_RIGHT_BOTTOM, 4, -4);
   char pbuf[24];
   snprintf(pbuf, sizeof(pbuf), "%.*f", pressureDecimals, pressureDisp);
   String p = stripAccents(pressureLabel) + pbuf + (pressureUnit ? pressureUnit : "");
