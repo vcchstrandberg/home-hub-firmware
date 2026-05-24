@@ -150,6 +150,7 @@ void parseWeather(const String& json);
 void drawCard(uint8_t card);
 void showError(const char* title, const char* detail = nullptr);
 void showLocale();
+void cycleLocale();
 
 // ── setup() ───────────────────────────────────────────────────────────────────
 void setup()
@@ -163,6 +164,7 @@ void setup()
 
 #ifdef WAVESHARE_ESP32C6_LCD
   LvglUI::init();
+  LvglUI::setOnTap(cycleLocale);
   LvglUI::showBootSplash(APP_VERSION, __DATE__, GIT_COMMIT);
   // Pump LVGL during the splash so the screen actually paints.
   unsigned long splashUntil = millis() + 5000;
@@ -250,6 +252,16 @@ void showLocale()
 #endif
 }
 
+// ── cycleLocale() ─────────────────────────────────────────────────────────────
+void cycleLocale()
+{
+  g_localeIndex = (g_localeIndex + 1) % LOCALE_COUNT;
+  g_loc = locales[g_localeIndex];
+  Serial.print("Locale: "); Serial.println(g_loc->code);
+  showLocale();
+  if (g_hasData) drawCard(g_card);
+}
+
 // ── loop() ────────────────────────────────────────────────────────────────────
 void loop()
 {
@@ -258,11 +270,7 @@ void loop()
   static unsigned long lastPress = 0;
   if (digitalRead(BUTTON_PIN) == LOW && now - lastPress > 300) {
     lastPress = now;
-    g_localeIndex = (g_localeIndex + 1) % LOCALE_COUNT;
-    g_loc = locales[g_localeIndex];
-    Serial.print("Locale: "); Serial.println(g_loc->code);
-    showLocale();
-    if (g_hasData) drawCard(g_card);
+    cycleLocale();
   }
 
   if (g_hasData && now - g_lastCardSwitch >= CARD_MS) {

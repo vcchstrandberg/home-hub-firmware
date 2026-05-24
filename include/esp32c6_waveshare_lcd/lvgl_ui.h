@@ -17,6 +17,10 @@ void init();
 // Call from loop() to let LVGL process timers and animations.
 void tick();
 
+// Register a callback fired once per touch tap (press + release).
+// Pass nullptr to disable. Replaces any previously-registered callback.
+void setOnTap(void (*callback)());
+
 // Modal overlays (hide the dashboard while shown).
 void showBootSplash(const char* version, const char* date, const char* commit);
 void showConnecting(const char* hint, const char* ssid);

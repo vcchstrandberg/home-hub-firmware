@@ -5,11 +5,17 @@
 
 #include "lvgl_ui.h"
 #include <lvgl.h>
+#include <Wire.h>
 #include <Arduino_GFX_Library.h>
 #include <esp_heap_caps.h>
+#include <esp_lcd_touch_axs5106l.h>
 
 // ─── Pin defs (Touch variant — see project_waveshare_touch_lcd_pinout memory) ──
-#define GFX_BL 23
+#define GFX_BL         23
+#define TOUCH_I2C_SDA  18
+#define TOUCH_I2C_SCL  19
+#define TOUCH_RST      20
+#define TOUCH_INT      21
 
 // ─── Display palette ──────────────────────────────────────────────────────────
 static const uint32_t COL_BG          = 0x0F1419;  // near-black navy
@@ -92,6 +98,34 @@ static void runRegInit() {
 static lv_disp_draw_buf_t s_draw_buf;
 static lv_color_t*        s_disp_buf = nullptr;
 static lv_disp_drv_t      s_disp_drv;
+static lv_indev_drv_t     s_indev_drv;
+
+// ─── Touch input + tap detection ──────────────────────────────────────────────
+// The indev callback runs inside lv_timer_handler(). The user-registered tap
+// callback (e.g. cycleLocale) may itself invoke tick() in a busy loop
+// (showLocale does this) — invoking it directly here would recurse. So we
+// just set a flag in the indev cb and dispatch from tick() after timer_handler
+// returns, guarded against re-entry.
+static void (*s_onTap)() = nullptr;
+static bool          s_wasPressed = false;
+static volatile bool s_tapPending = false;
+
+static void touchpad_read_cb(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
+  touch_data_t td;
+  bsp_touch_read();
+  bool nowPressed = bsp_touch_get_coordinates(&td) && td.touch_num > 0;
+
+  if (nowPressed) {
+    data->point.x = td.coords[0].x;
+    data->point.y = td.coords[0].y;
+    data->state   = LV_INDEV_STATE_PRESSED;
+  } else {
+    data->state   = LV_INDEV_STATE_RELEASED;
+  }
+
+  if (s_wasPressed && !nowPressed) s_tapPending = true;
+  s_wasPressed = nowPressed;
+}
 
 static void disp_flush(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* color_p) {
   uint32_t w = area->x2 - area->x1 + 1;
@@ -360,11 +394,34 @@ void LvglUI::init() {
   s_disp_drv.draw_buf = &s_draw_buf;
   lv_disp_drv_register(&s_disp_drv);
 
+  // Touch input — AXS5106L on its own I2C bus.
+  Wire.begin(TOUCH_I2C_SDA, TOUCH_I2C_SCL);
+  bsp_touch_init(&Wire, TOUCH_RST, TOUCH_INT, s_gfx->getRotation(), w, h);
+  lv_indev_drv_init(&s_indev_drv);
+  s_indev_drv.type    = LV_INDEV_TYPE_POINTER;
+  s_indev_drv.read_cb = touchpad_read_cb;
+  lv_indev_drv_register(&s_indev_drv);
+
   buildUI();
 }
 
 void LvglUI::tick() {
   lv_timer_handler();
+
+  // Dispatch any pending tap from the previous timer handler pass.
+  // Re-entry guard: if the user callback itself calls tick() (e.g. via
+  // showLocale's busy wait), don't recursively dispatch another tap.
+  static bool inDispatch = false;
+  if (s_tapPending && s_onTap && !inDispatch) {
+    s_tapPending = false;
+    inDispatch = true;
+    s_onTap();
+    inDispatch = false;
+  }
+}
+
+void LvglUI::setOnTap(void (*callback)()) {
+  s_onTap = callback;
 }
 
 void LvglUI::showBootSplash(const char* version, const char* date, const char* commit) {
