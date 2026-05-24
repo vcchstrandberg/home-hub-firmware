@@ -1,0 +1,8 @@
+.pio/
+tests/*/.pio/
+include/**/arduino_secrets.h
+.DS_Store
+IMG_*.jpg
+IMG_*.HEIC
+IMG_*.heic
+*.pyc
