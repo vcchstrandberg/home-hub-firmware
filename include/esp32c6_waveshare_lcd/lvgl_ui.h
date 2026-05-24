@@ -14,6 +14,13 @@ namespace LvglUI {
 // (with placeholder values) underneath a hidden modal overlay.
 void init();
 
+// Switch the dashboard between landscape (320x172) and portrait (172x320)
+// layouts. Rotates the panel, updates LVGL display dimensions, and rebuilds
+// the entire widget tree. Caller must re-trigger setHeader/setIndoor/etc.
+// afterwards to repopulate values; the new widgets start with placeholders.
+// No-op if the requested orientation is already current.
+void setOrientation(bool landscape);
+
 // Call from loop() to let LVGL process timers and animations.
 void tick();
 

@@ -12,6 +12,7 @@
 
 #ifdef WAVESHARE_ESP32C6_LCD
 #  include "lvgl_ui.h"
+#  include "orientation.h"
 #  include <WiFi.h>
 #  include <HTTPClient.h>
 #  define BUTTON_PIN 9
@@ -165,6 +166,10 @@ void setup()
 #ifdef WAVESHARE_ESP32C6_LCD
   LvglUI::init();
   LvglUI::setOnTap(cycleLocale);
+  // Wire is already begun by LvglUI::init() for the touch controller — the
+  // QMI8658 shares that I2C bus, so we can init it here without a second
+  // Wire.begin().
+  Orientation::init();
   LvglUI::showBootSplash(APP_VERSION, __DATE__, GIT_COMMIT);
   // Pump LVGL during the splash so the screen actually paints.
   unsigned long splashUntil = millis() + 5000;
@@ -272,6 +277,23 @@ void loop()
     lastPress = now;
     cycleLocale();
   }
+
+#ifdef WAVESHARE_ESP32C6_LCD
+  // Poll the accelerometer ~4 Hz. The poller does its own debouncing and
+  // only returns a non-UNKNOWN value when the orientation has been stable
+  // for ~600 ms.
+  static unsigned long lastOrient = 0;
+  if (now - lastOrient >= 250) {
+    lastOrient = now;
+    Orientation::Mode m = Orientation::poll();
+    if (m != Orientation::UNKNOWN) {
+      Serial.print("Orientation: ");
+      Serial.println(m == Orientation::LANDSCAPE ? "landscape" : "portrait");
+      LvglUI::setOrientation(m == Orientation::LANDSCAPE);
+      if (g_hasData) drawCard(g_card);
+    }
+  }
+#endif
 
   if (g_hasData && now - g_lastCardSwitch >= CARD_MS) {
     g_lastCardSwitch = now;

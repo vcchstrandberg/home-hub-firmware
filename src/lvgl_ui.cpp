@@ -208,15 +208,62 @@ static void styleContainer(lv_obj_t* obj, uint32_t bgColor, uint32_t borderColor
   lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
 }
 
-static void buildUI() {
+// Track current orientation so setOrientation can skip no-op calls.
+static bool s_isLandscape = true;
+
+// Shared helpers used by both layout builders.
+static void resetScreen() {
   lv_obj_t* scr = lv_scr_act();
+  lv_obj_clean(scr);  // delete previous widget tree
   lv_obj_set_style_bg_color(scr, lv_color_hex(COL_BG), LV_PART_MAIN);
   lv_obj_set_style_pad_all(scr, 0, LV_PART_MAIN);
   lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+}
 
-  // Header
-  ui.header = lv_obj_create(scr);
-  lv_obj_set_size(ui.header, 320, 24);
+// Build one temperature card: name label top-left, big number left-center,
+// unit beside it, sub label (humidity / pressure) bottom-left. Writes the
+// four child widget pointers via the out parameters.
+static lv_obj_t* createTempCard(lv_obj_t* parent, int x, int y, int w, int h,
+                                uint32_t accentColor, const char* nameText,
+                                lv_obj_t** outName, lv_obj_t** outTemp,
+                                lv_obj_t** outUnit, lv_obj_t** outSub) {
+  lv_obj_t* card = lv_obj_create(parent);
+  lv_obj_set_size(card, w, h);
+  lv_obj_set_pos(card, x, y);
+  styleContainer(card, COL_CARD_BG, accentColor, 1, 5, 6);
+
+  *outName = lv_label_create(card);
+  lv_label_set_text(*outName, nameText);
+  lv_obj_set_style_text_color(*outName, lv_color_hex(accentColor), 0);
+  lv_obj_set_style_text_font(*outName, &lv_font_montserrat_14, 0);
+  lv_obj_align(*outName, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  *outTemp = lv_label_create(card);
+  lv_label_set_text(*outTemp, "--");
+  lv_obj_set_style_text_color(*outTemp, lv_color_white(), 0);
+  lv_obj_set_style_text_font(*outTemp, &lv_font_montserrat_36, 0);
+  lv_obj_align(*outTemp, LV_ALIGN_LEFT_MID, 0, 4);
+
+  *outUnit = lv_label_create(card);
+  lv_label_set_text(*outUnit, "");
+  lv_obj_set_style_text_color(*outUnit, lv_color_hex(COL_MUTED), 0);
+  lv_obj_set_style_text_font(*outUnit, &lv_font_montserrat_24, 0);
+  lv_obj_align_to(*outUnit, *outTemp, LV_ALIGN_OUT_RIGHT_BOTTOM, 4, -4);
+
+  *outSub = lv_label_create(card);
+  lv_label_set_text(*outSub, "--");
+  lv_obj_set_style_text_color(*outSub, lv_color_hex(COL_DETAIL), 0);
+  lv_obj_set_style_text_font(*outSub, &lv_font_montserrat_12, 0);
+  lv_obj_align(*outSub, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+
+  return card;
+}
+
+// Header bar: city left, locale right. Same in both orientations, only width
+// changes.
+static void createHeader(lv_obj_t* parent, int w) {
+  ui.header = lv_obj_create(parent);
+  lv_obj_set_size(ui.header, w, 24);
   lv_obj_set_pos(ui.header, 0, 0);
   styleContainer(ui.header, COL_HEADER_BG, 0, 0, 0, 0);
 
@@ -231,68 +278,41 @@ static void buildUI() {
   lv_obj_set_style_text_color(ui.locale_label, lv_color_hex(COL_DETAIL), 0);
   lv_obj_set_style_text_font(ui.locale_label, &lv_font_montserrat_12, 0);
   lv_obj_align(ui.locale_label, LV_ALIGN_RIGHT_MID, -10, 0);
+}
 
-  // Indoor card (amber accent)
-  ui.indoor_card = lv_obj_create(scr);
-  lv_obj_set_size(ui.indoor_card, 156, 102);
-  lv_obj_set_pos(ui.indoor_card, 2, 28);
-  styleContainer(ui.indoor_card, COL_CARD_BG, COL_INDOOR_ACC, 1, 5, 6);
+// Modal overlay: full-screen, hidden by default. Used for splash, connecting,
+// locale-cycle hint, and error messages.
+static void createModal(lv_obj_t* parent, int w, int h) {
+  ui.modal = lv_obj_create(parent);
+  lv_obj_set_size(ui.modal, w, h);
+  lv_obj_set_pos(ui.modal, 0, 0);
+  styleContainer(ui.modal, COL_BG, 0, 0, 0, 12);
 
-  ui.indoor_name = lv_label_create(ui.indoor_card);
-  lv_label_set_text(ui.indoor_name, "INNE");
-  lv_obj_set_style_text_color(ui.indoor_name, lv_color_hex(COL_INDOOR_ACC), 0);
-  lv_obj_set_style_text_font(ui.indoor_name, &lv_font_montserrat_14, 0);
-  lv_obj_align(ui.indoor_name, LV_ALIGN_TOP_LEFT, 0, 0);
+  ui.modal_label = lv_label_create(ui.modal);
+  lv_label_set_text(ui.modal_label, "");
+  lv_obj_set_style_text_color(ui.modal_label, lv_color_white(), 0);
+  lv_obj_set_style_text_font(ui.modal_label, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_align(ui.modal_label, LV_TEXT_ALIGN_CENTER, 0);
+  lv_label_set_long_mode(ui.modal_label, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(ui.modal_label, w - 24);
+  lv_obj_center(ui.modal_label);
 
-  ui.indoor_temp = lv_label_create(ui.indoor_card);
-  lv_label_set_text(ui.indoor_temp, "--");
-  lv_obj_set_style_text_color(ui.indoor_temp, lv_color_white(), 0);
-  lv_obj_set_style_text_font(ui.indoor_temp, &lv_font_montserrat_36, 0);
-  lv_obj_align(ui.indoor_temp, LV_ALIGN_LEFT_MID, 0, 4);
+  lv_obj_add_flag(ui.modal, LV_OBJ_FLAG_HIDDEN);
+}
 
-  ui.indoor_unit = lv_label_create(ui.indoor_card);
-  lv_label_set_text(ui.indoor_unit, "C");
-  lv_obj_set_style_text_color(ui.indoor_unit, lv_color_hex(COL_MUTED), 0);
-  lv_obj_set_style_text_font(ui.indoor_unit, &lv_font_montserrat_24, 0);
-  lv_obj_align_to(ui.indoor_unit, ui.indoor_temp, LV_ALIGN_OUT_RIGHT_BOTTOM, 4, -4);
+// ─── Landscape layout (320 x 172) ─────────────────────────────────────────────
+static void buildLandscape() {
+  resetScreen();
+  lv_obj_t* scr = lv_scr_act();
 
-  ui.indoor_humidity = lv_label_create(ui.indoor_card);
-  lv_label_set_text(ui.indoor_humidity, "Fukt: --");
-  lv_obj_set_style_text_color(ui.indoor_humidity, lv_color_hex(COL_DETAIL), 0);
-  lv_obj_set_style_text_font(ui.indoor_humidity, &lv_font_montserrat_12, 0);
-  lv_obj_align(ui.indoor_humidity, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+  createHeader(scr, 320);
 
-  // Outdoor card (blue accent)
-  ui.outdoor_card = lv_obj_create(scr);
-  lv_obj_set_size(ui.outdoor_card, 156, 102);
-  lv_obj_set_pos(ui.outdoor_card, 162, 28);
-  styleContainer(ui.outdoor_card, COL_CARD_BG, COL_OUTDOOR_ACC, 1, 5, 6);
+  // Two cards side by side at y=28; rain row across the bottom.
+  createTempCard(scr,  2, 28, 156, 102, COL_INDOOR_ACC,  "INNE",
+                 &ui.indoor_name,  &ui.indoor_temp,  &ui.indoor_unit,  &ui.indoor_humidity);
+  createTempCard(scr, 162, 28, 156, 102, COL_OUTDOOR_ACC, "UTE",
+                 &ui.outdoor_name, &ui.outdoor_temp, &ui.outdoor_unit, &ui.outdoor_pressure);
 
-  ui.outdoor_name = lv_label_create(ui.outdoor_card);
-  lv_label_set_text(ui.outdoor_name, "UTE");
-  lv_obj_set_style_text_color(ui.outdoor_name, lv_color_hex(COL_OUTDOOR_ACC), 0);
-  lv_obj_set_style_text_font(ui.outdoor_name, &lv_font_montserrat_14, 0);
-  lv_obj_align(ui.outdoor_name, LV_ALIGN_TOP_LEFT, 0, 0);
-
-  ui.outdoor_temp = lv_label_create(ui.outdoor_card);
-  lv_label_set_text(ui.outdoor_temp, "--");
-  lv_obj_set_style_text_color(ui.outdoor_temp, lv_color_white(), 0);
-  lv_obj_set_style_text_font(ui.outdoor_temp, &lv_font_montserrat_36, 0);
-  lv_obj_align(ui.outdoor_temp, LV_ALIGN_LEFT_MID, 0, 4);
-
-  ui.outdoor_unit = lv_label_create(ui.outdoor_card);
-  lv_label_set_text(ui.outdoor_unit, "C");
-  lv_obj_set_style_text_color(ui.outdoor_unit, lv_color_hex(COL_MUTED), 0);
-  lv_obj_set_style_text_font(ui.outdoor_unit, &lv_font_montserrat_24, 0);
-  lv_obj_align_to(ui.outdoor_unit, ui.outdoor_temp, LV_ALIGN_OUT_RIGHT_BOTTOM, 4, -4);
-
-  ui.outdoor_pressure = lv_label_create(ui.outdoor_card);
-  lv_label_set_text(ui.outdoor_pressure, "Tryck: --");
-  lv_obj_set_style_text_color(ui.outdoor_pressure, lv_color_hex(COL_DETAIL), 0);
-  lv_obj_set_style_text_font(ui.outdoor_pressure, &lv_font_montserrat_12, 0);
-  lv_obj_align(ui.outdoor_pressure, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-
-  // Rain row at the bottom
   ui.rain_row = lv_obj_create(scr);
   lv_obj_set_size(ui.rain_row, 320, 38);
   lv_obj_set_pos(ui.rain_row, 0, 134);
@@ -322,22 +342,55 @@ static void buildUI() {
   lv_obj_set_style_text_font(ui.rain_24h, &lv_font_montserrat_14, 0);
   lv_obj_align(ui.rain_24h, LV_ALIGN_RIGHT_MID, -4, 0);
 
-  // Modal overlay (full-screen, hidden by default)
-  ui.modal = lv_obj_create(scr);
-  lv_obj_set_size(ui.modal, 320, 172);
-  lv_obj_set_pos(ui.modal, 0, 0);
-  styleContainer(ui.modal, COL_BG, 0, 0, 0, 12);
+  createModal(scr, 320, 172);
+}
 
-  ui.modal_label = lv_label_create(ui.modal);
-  lv_label_set_text(ui.modal_label, "");
-  lv_obj_set_style_text_color(ui.modal_label, lv_color_white(), 0);
-  lv_obj_set_style_text_font(ui.modal_label, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_align(ui.modal_label, LV_TEXT_ALIGN_CENTER, 0);
-  lv_label_set_long_mode(ui.modal_label, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(ui.modal_label, 296);
-  lv_obj_center(ui.modal_label);
+// ─── Portrait layout (172 x 320) ──────────────────────────────────────────────
+// Stacked: header on top, indoor + outdoor cards stacked below, then a
+// two-line rain row at the bottom (1h and 24h stacked since the row is narrow).
+static void buildPortrait() {
+  resetScreen();
+  lv_obj_t* scr = lv_scr_act();
 
-  lv_obj_add_flag(ui.modal, LV_OBJ_FLAG_HIDDEN);
+  createHeader(scr, 172);
+
+  // Cards: 168 wide, 102 tall, stacked.
+  createTempCard(scr, 2, 28,  168, 102, COL_INDOOR_ACC,  "INNE",
+                 &ui.indoor_name,  &ui.indoor_temp,  &ui.indoor_unit,  &ui.indoor_humidity);
+  createTempCard(scr, 2, 134, 168, 102, COL_OUTDOOR_ACC, "UTE",
+                 &ui.outdoor_name, &ui.outdoor_temp, &ui.outdoor_unit, &ui.outdoor_pressure);
+
+  // Rain row: 172 wide, 68 tall, two lines.
+  ui.rain_row = lv_obj_create(scr);
+  lv_obj_set_size(ui.rain_row, 172, 68);
+  lv_obj_set_pos(ui.rain_row, 0, 240);
+  styleContainer(ui.rain_row, COL_RAIN_BG, 0, 0, 0, 6);
+
+  ui.rain_label = lv_label_create(ui.rain_row);
+  lv_label_set_text(ui.rain_label, "REGN");
+  lv_obj_set_style_text_color(ui.rain_label, lv_color_white(), 0);
+  lv_obj_set_style_text_font(ui.rain_label, &lv_font_montserrat_14, 0);
+  lv_obj_align(ui.rain_label, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  ui.rain_droplet = lv_obj_create(ui.rain_row);
+  lv_obj_set_size(ui.rain_droplet, 10, 10);
+  styleContainer(ui.rain_droplet, 0xFFFFFF, 0, 0, 5, 0);
+  lv_obj_align(ui.rain_droplet, LV_ALIGN_TOP_LEFT, 50, 4);
+  lv_obj_add_flag(ui.rain_droplet, LV_OBJ_FLAG_HIDDEN);
+
+  ui.rain_1h = lv_label_create(ui.rain_row);
+  lv_label_set_text(ui.rain_1h, "1h: --");
+  lv_obj_set_style_text_color(ui.rain_1h, lv_color_white(), 0);
+  lv_obj_set_style_text_font(ui.rain_1h, &lv_font_montserrat_14, 0);
+  lv_obj_align(ui.rain_1h, LV_ALIGN_TOP_RIGHT, -4, 0);
+
+  ui.rain_24h = lv_label_create(ui.rain_row);
+  lv_label_set_text(ui.rain_24h, "24h: --");
+  lv_obj_set_style_text_color(ui.rain_24h, lv_color_white(), 0);
+  lv_obj_set_style_text_font(ui.rain_24h, &lv_font_montserrat_14, 0);
+  lv_obj_align(ui.rain_24h, LV_ALIGN_BOTTOM_RIGHT, -4, 0);
+
+  createModal(scr, 172, 320);
 }
 
 // ─── Modal helpers ───────────────────────────────────────────────────────────
@@ -402,7 +455,33 @@ void LvglUI::init() {
   s_indev_drv.read_cb = touchpad_read_cb;
   lv_indev_drv_register(&s_indev_drv);
 
-  buildUI();
+  s_isLandscape = true;
+  buildLandscape();
+}
+
+void LvglUI::setOrientation(bool landscape) {
+  if (landscape == s_isLandscape) return;
+  s_isLandscape = landscape;
+
+  // Rotate the panel hardware. Arduino_GFX rotations:
+  //   0 = portrait, 1 = landscape, 2 = portrait flipped, 3 = landscape flipped.
+  // The IMU poller only reports two states (LANDSCAPE/PORTRAIT) so we use the
+  // canonical orientations here. Could extend to flipped variants later by
+  // checking the sign of the dominant accel axis.
+  s_gfx->setRotation(landscape ? 1 : 0);
+
+  uint32_t w = s_gfx->width();
+  uint32_t h = s_gfx->height();
+  s_disp_drv.hor_res = w;
+  s_disp_drv.ver_res = h;
+  lv_disp_drv_update(lv_disp_get_default(), &s_disp_drv);
+
+  if (landscape) buildLandscape();
+  else           buildPortrait();
+
+  // Touch coordinates may be reported in the old frame until next bsp_touch
+  // re-init, but we only use press/release edges (tap detection), not coords,
+  // so it doesn't matter.
 }
 
 void LvglUI::tick() {
