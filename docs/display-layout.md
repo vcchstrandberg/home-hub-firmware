@@ -1,0 +1,167 @@
+# Display Layout
+
+All boards show the same weather data. Labels and units follow the active locale.
+
+| Field | Source field | Unit |
+|---|---|---|
+| Indoor temperature | `indoor_temp` | °C / °F |
+| Indoor humidity | `indoor_humidity` | % |
+| Air pressure | `pressure` | hPa / inHg |
+| Outdoor temperature | `outdoor_temp` | °C / °F |
+| Rain last hour | `rain_1h` | mm / in |
+| Rain last 24 h | `rain_24h` | mm / in |
+| Raining now | `is_raining` | indicator only |
+| City name | `city` | string |
+
+---
+
+## SSD1306 OLED — 128×64 px (ESP32-CAM · ESP32 DevKit · Uno R4 WiFi)
+
+Three full-screen cards rotate every 5 seconds. Each card has a 16×16 Open Iconic weather icon, a large primary value in logisoso28 font, and a smaller secondary line.
+
+**Boot splash** (5 s):
+```
+┌──────────────────────────────┐
+│ Netatmo Home Hub             │  ncenB08 font
+│ v1.0                         │
+│ May 14 2026                  │
+│ 0362bcf                      │  ← git commit hash
+└──────────────────────────────┘
+```
+
+**Locale switch** (1.5 s, on button press):
+```
+┌──────────────────────────────┐
+│ Language:                    │  ncenB08
+│                              │
+│  Svenska                     │  logisoso16 font
+│  sv-SE                       │  ncenB08
+└──────────────────────────────┘
+```
+
+**Card 0 — Indoor** (sun icon, glyph 69):
+```
+┌──────────────────────────────┐
+│ ☀  INNE / INDOOR             │  icon 16×16 + locale label
+│                              │
+│  21.5C                       │  logisoso28 — temp + unit per locale
+│                              │
+│  Fukt: 45%                   │  humidity label + value per locale
+└──────────────────────────────┘
+```
+
+**Card 1 — Outdoor** (cloud icon, glyph 64):
+```
+┌──────────────────────────────┐
+│ ⛅  Stockholm                 │  icon + city name from API
+│                              │
+│  8.3C                        │  outdoor temp
+│                              │
+│  Tryck: 1013hPa              │  pressure label + value per locale
+└──────────────────────────────┘
+```
+
+**Card 2 — Rain** (rain icon, glyph 67):
+```
+┌──────────────────────────────┐
+│ 🌧  REGN / RAIN           💧 │  💧 shown only when is_raining = true
+│                              │
+│  1h:  0.6mm                  │  logisoso16
+│                              │
+│  24h: 3.2mm                  │
+└──────────────────────────────┘
+```
+
+**Error screen** (on connection failure):
+```
+┌──────────────────────────────┐
+│ ⚙  ERROR                     │  embedded icon glyph 71
+│  Hub unreachable             │  g_loc->hub_unreachable
+│  (HTTP code)                 │  optional detail
+│  Forsoker... / Retrying...   │  g_loc->retrying
+└──────────────────────────────┘
+```
+
+---
+
+## TFT — Waveshare ESP32-C6 Touch LCD 1.47
+
+172×320 IPS panel driven by Arduino_GFX + LVGL 8.4. The dashboard rebuilds itself when the accelerometer detects a change between landscape (320×172) and portrait (172×320). Single full-screen view in either orientation — no card cycling.
+
+**Source:** widget tree lives in `src/lvgl_ui.cpp`, with `buildLandscape()` and `buildPortrait()` sharing a `createTempCard()` helper, a `createHeader()` helper, and a `createModal()` helper for the overlay screens (boot splash, connecting, locale hint, error).
+
+**Modal overlays** (single multi-line label centered on the full-screen modal container; same code path in both orientations):
+
+| Trigger | Text content |
+|---|---|
+| Boot splash (5 s) | `Netatmo Home Hub` / `v1.x` / `May 24 2026` / git commit |
+| Connecting | `Ansluter WiFi:` / `<SSID>` |
+| Locale switch (1.5 s, BOOT button or screen tap) | `Language` / `Svenska` / `sv-SE` |
+| Error | `ERROR` / title / detail / `Forsoker...` (on dark red bg) |
+
+**Landscape dashboard (320×172):**
+
+```
+ x=0                            x=162                       x=320
+ ┌─────────────────────────────────────────────────────────────┐  y=0
+ │ Vastra Lassby                                       sv-SE   │  header (teal #024D5C, 24 tall)
+ ├─────────────────────────────┬───────────────────────────────┤  y=28
+ │ ┌─────────────────────────┐ │ ┌───────────────────────────┐ │
+ │ │ INNE (amber #FFA726)    │ │ │ UTE (blue #4FC3F7)        │ │
+ │ │                         │ │ │                           │ │
+ │ │ 24.7 C                  │ │ │ 18.5 C                    │ │  card 156×102
+ │ │                         │ │ │                           │ │
+ │ │ Fukt: 41%               │ │ │ Tryck: 1028hPa            │ │
+ │ └─────────────────────────┘ │ └───────────────────────────┘ │
+ ├─────────────────────────────┴───────────────────────────────┤  y=134
+ │ REGN  1h: 0.0mm                              24h: 0.0mm     │  rain row (blue #0277BD, 38 tall)
+ └─────────────────────────────────────────────────────────────┘  y=172
+```
+
+**Portrait dashboard (172×320):**
+
+```
+ x=0                  x=172
+ ┌───────────────────────┐  y=0
+ │ Vastra Lassby  sv-SE  │  header (24 tall)
+ ├───────────────────────┤  y=28
+ │ ┌───────────────────┐ │
+ │ │ INNE (amber)      │ │
+ │ │                   │ │
+ │ │ 24.7 C            │ │  indoor card 168×102
+ │ │                   │ │
+ │ │ Fukt: 41%         │ │
+ │ └───────────────────┘ │
+ ├───────────────────────┤  y=134
+ │ ┌───────────────────┐ │
+ │ │ UTE (blue)        │ │
+ │ │                   │ │
+ │ │ 18.5 C            │ │  outdoor card 168×102
+ │ │                   │ │
+ │ │ Tryck: 1028hPa    │ │
+ │ └───────────────────┘ │
+ ├───────────────────────┤  y=240
+ │ REGN         1h: 0.0mm│  rain row (68 tall, two lines)
+ │              24h: 0.0mm│
+ └───────────────────────┘  y=308
+```
+
+**Palette** (see `src/lvgl_ui.cpp` for constants):
+
+| Token | Hex | Used by |
+|---|---|---|
+| `COL_BG` | `#0F1419` | Screen background |
+| `COL_HEADER_BG` | `#024D5C` | Header bar |
+| `COL_CARD_BG` | `#1A2331` | Inside indoor / outdoor cards |
+| `COL_INDOOR_ACC` | `#FFA726` | Indoor card border + "INNE" label |
+| `COL_OUTDOOR_ACC` | `#4FC3F7` | Outdoor card border + "UTE" label |
+| `COL_RAIN_BG` | `#0277BD` | Rain row bar |
+| `COL_MUTED` | `#90A4AE` | Temperature unit |
+| `COL_DETAIL` | `#CFD8DC` | Humidity / pressure / locale code |
+| `COL_ERROR_BG` | `#611A15` | Error modal bg |
+
+**Fonts:** LVGL's bundled Montserrat at sizes 12, 14, 24, 36. Sizes 24 and 36 must remain enabled in `include/esp32c6_waveshare_lcd/lv_conf.h`. The default font omits Latin-1 supplement glyphs (ÅÄÖ) — those characters are stripped to ASCII (`Vastra Lassby`) by `stripAccents()` in `lvgl_ui.cpp` to avoid placeholder boxes. Switching to a custom Latin-1 Montserrat would let real Swedish characters render natively.
+
+**Touch input:** AXS5106L controller on I2C (SDA=18, SCL=19, addr 0x63). Any tap anywhere on screen cycles the locale, same as the BOOT button.
+
+**Orientation:** QMI8658 accelerometer on the same I2C bus (addr 0x6B). Polled every 250 ms by `Orientation::poll()`; emits a transition when |X| or |Y| dominance has been stable for ≥600 ms. Suppressed while |Z| > 0.85 g (lying flat). On transition, `LvglUI::setOrientation()` rotates the Arduino_GFX panel, updates LVGL's display driver dimensions, cleans the screen, and rebuilds the appropriate layout. main.cpp then calls `drawCard()` so the new layout immediately gets populated.
