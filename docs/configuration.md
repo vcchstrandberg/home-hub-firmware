@@ -57,7 +57,7 @@ All four files use the same format — five values:
 
 `PROXY_HOST` can be either the mDNS hostname (`netatmo-hub.local`) or the Pi's IP. If mDNS is unreliable on your network, use the IP and assign a static DHCP lease for the Pi in your router — see the server repo's [raspberry-pi-setup.md](https://github.com/vcchstrandberg/netatmo-home-hub/blob/main/docs/raspberry-pi-setup.md).
 
-`DEVICE_NAME` is sent as the `X-Device-Name` HTTP header on every `/weather` request. The hub uses it to label each device on its status page. Reflash with a new name and the hub picks it up on the next poll — no server config needed.
+`DEVICE_NAME` is sent as the `X-Device-Name` HTTP header on every `/weather` request, but it's only the **initial** friendly name. Once the device first appears in the hub's web UI, rename it there — server-side names persist across reflashes. Identity is keyed on the board's MAC address (`X-Device-Id` header, also sent automatically), so three identical units flashed from the same secrets file still appear as three distinct devices.
 
 ---
 

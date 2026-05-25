@@ -323,6 +323,8 @@ void fetchWeatherData()
   http.begin(url);
   http.setTimeout(5000);
   http.addHeader("X-Device-Name", DEVICE_NAME);
+  // Stable per-board identifier — the hub uses MAC, not IP, to key its registry.
+  http.addHeader("X-Device-Id", WiFi.macAddress());
   int code = http.GET();
   if (code != 200) {
     Serial.printf("Proxy HTTP %d\n", code);
@@ -346,7 +348,10 @@ void fetchWeatherData()
   }
   client.print("GET /weather HTTP/1.0\r\nHost: ");
   client.print(PROXY_HOST);
-  client.print("\r\nX-Device-Name: " DEVICE_NAME "\r\nConnection: close\r\n\r\n");
+  client.print("\r\nX-Device-Name: " DEVICE_NAME);
+  client.print("\r\nX-Device-Id: ");
+  client.print(WiFi.macAddress());
+  client.print("\r\nConnection: close\r\n\r\n");
 
   unsigned long t = millis() + 5000;
   while (!client.available() && millis() < t) delay(10);
