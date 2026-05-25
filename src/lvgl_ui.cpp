@@ -314,32 +314,35 @@ static void buildLandscape() {
                  &ui.outdoor_name, &ui.outdoor_temp, &ui.outdoor_unit, &ui.outdoor_pressure);
 
   ui.rain_row = lv_obj_create(scr);
-  lv_obj_set_size(ui.rain_row, 320, 38);
-  lv_obj_set_pos(ui.rain_row, 0, 134);
+  lv_obj_set_size(ui.rain_row, 320, 42);
+  lv_obj_set_pos(ui.rain_row, 0, 130);
   styleContainer(ui.rain_row, COL_RAIN_BG, 0, 0, 0, 4);
 
   ui.rain_label = lv_label_create(ui.rain_row);
   lv_label_set_text(ui.rain_label, "REGN");
   lv_obj_set_style_text_color(ui.rain_label, lv_color_white(), 0);
-  lv_obj_set_style_text_font(ui.rain_label, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(ui.rain_label, &lv_font_montserrat_20, 0);
   lv_obj_align(ui.rain_label, LV_ALIGN_LEFT_MID, 4, 0);
 
   ui.rain_droplet = lv_obj_create(ui.rain_row);
-  lv_obj_set_size(ui.rain_droplet, 10, 10);
-  styleContainer(ui.rain_droplet, 0xFFFFFF, 0, 0, 5, 0);
-  lv_obj_align(ui.rain_droplet, LV_ALIGN_LEFT_MID, 56, 0);
+  lv_obj_set_size(ui.rain_droplet, 12, 12);
+  styleContainer(ui.rain_droplet, 0xFFFFFF, 0, 0, 6, 0);
+  lv_obj_align(ui.rain_droplet, LV_ALIGN_LEFT_MID, 64, 0);
   lv_obj_add_flag(ui.rain_droplet, LV_OBJ_FLAG_HIDDEN);
 
+  // Pull "1h" far enough left that the gap to the right-aligned "24h"
+  // never closes, regardless of unit width (Montserrat 'mm' is much
+  // wider than 'in', so 'mm' locales need the wider spacing).
   ui.rain_1h = lv_label_create(ui.rain_row);
   lv_label_set_text(ui.rain_1h, "1h: --");
   lv_obj_set_style_text_color(ui.rain_1h, lv_color_white(), 0);
-  lv_obj_set_style_text_font(ui.rain_1h, &lv_font_montserrat_14, 0);
-  lv_obj_align(ui.rain_1h, LV_ALIGN_LEFT_MID, 76, 0);
+  lv_obj_set_style_text_font(ui.rain_1h, &lv_font_montserrat_20, 0);
+  lv_obj_align(ui.rain_1h, LV_ALIGN_LEFT_MID, 80, 0);
 
   ui.rain_24h = lv_label_create(ui.rain_row);
   lv_label_set_text(ui.rain_24h, "24h: --");
   lv_obj_set_style_text_color(ui.rain_24h, lv_color_white(), 0);
-  lv_obj_set_style_text_font(ui.rain_24h, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(ui.rain_24h, &lv_font_montserrat_20, 0);
   lv_obj_align(ui.rain_24h, LV_ALIGN_RIGHT_MID, -4, 0);
 
   createModal(scr, 320, 172);
@@ -360,35 +363,37 @@ static void buildPortrait() {
   createTempCard(scr, 2, 134, 168, 102, COL_OUTDOOR_ACC, "UTE",
                  &ui.outdoor_name, &ui.outdoor_temp, &ui.outdoor_unit, &ui.outdoor_pressure);
 
-  // Rain row: 172 wide, 68 tall, two lines.
+  // Rain row: at 20pt a single line of "1h: 0.0mm" no longer fits next to
+  // "REGN" within 172px wide, so we stack three lines: REGN header on top,
+  // 1h in the middle, 24h at the bottom.
   ui.rain_row = lv_obj_create(scr);
-  lv_obj_set_size(ui.rain_row, 172, 68);
-  lv_obj_set_pos(ui.rain_row, 0, 240);
-  styleContainer(ui.rain_row, COL_RAIN_BG, 0, 0, 0, 6);
+  lv_obj_set_size(ui.rain_row, 172, 80);
+  lv_obj_set_pos(ui.rain_row, 0, 238);
+  styleContainer(ui.rain_row, COL_RAIN_BG, 0, 0, 0, 4);
 
   ui.rain_label = lv_label_create(ui.rain_row);
   lv_label_set_text(ui.rain_label, "REGN");
   lv_obj_set_style_text_color(ui.rain_label, lv_color_white(), 0);
-  lv_obj_set_style_text_font(ui.rain_label, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(ui.rain_label, &lv_font_montserrat_20, 0);
   lv_obj_align(ui.rain_label, LV_ALIGN_TOP_LEFT, 0, 0);
 
   ui.rain_droplet = lv_obj_create(ui.rain_row);
-  lv_obj_set_size(ui.rain_droplet, 10, 10);
-  styleContainer(ui.rain_droplet, 0xFFFFFF, 0, 0, 5, 0);
-  lv_obj_align(ui.rain_droplet, LV_ALIGN_TOP_LEFT, 50, 4);
+  lv_obj_set_size(ui.rain_droplet, 12, 12);
+  styleContainer(ui.rain_droplet, 0xFFFFFF, 0, 0, 6, 0);
+  lv_obj_align(ui.rain_droplet, LV_ALIGN_TOP_RIGHT, 0, 4);
   lv_obj_add_flag(ui.rain_droplet, LV_OBJ_FLAG_HIDDEN);
 
   ui.rain_1h = lv_label_create(ui.rain_row);
   lv_label_set_text(ui.rain_1h, "1h: --");
   lv_obj_set_style_text_color(ui.rain_1h, lv_color_white(), 0);
-  lv_obj_set_style_text_font(ui.rain_1h, &lv_font_montserrat_14, 0);
-  lv_obj_align(ui.rain_1h, LV_ALIGN_TOP_RIGHT, -4, 0);
+  lv_obj_set_style_text_font(ui.rain_1h, &lv_font_montserrat_20, 0);
+  lv_obj_align(ui.rain_1h, LV_ALIGN_LEFT_MID, 0, 0);
 
   ui.rain_24h = lv_label_create(ui.rain_row);
   lv_label_set_text(ui.rain_24h, "24h: --");
   lv_obj_set_style_text_color(ui.rain_24h, lv_color_white(), 0);
-  lv_obj_set_style_text_font(ui.rain_24h, &lv_font_montserrat_14, 0);
-  lv_obj_align(ui.rain_24h, LV_ALIGN_BOTTOM_RIGHT, -4, 0);
+  lv_obj_set_style_text_font(ui.rain_24h, &lv_font_montserrat_20, 0);
+  lv_obj_align(ui.rain_24h, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
   createModal(scr, 172, 320);
 }
