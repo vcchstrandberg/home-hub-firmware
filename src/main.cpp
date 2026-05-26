@@ -280,16 +280,16 @@ void loop()
 
 #ifdef WAVESHARE_ESP32C6_LCD
   // Poll the accelerometer ~4 Hz. The poller does its own debouncing and
-  // only returns a non-UNKNOWN value when the orientation has been stable
-  // for ~600 ms.
+  // only returns a committed rotation (0-3) when the orientation has been
+  // stable for ~600 ms.
   static unsigned long lastOrient = 0;
   if (now - lastOrient >= 250) {
     lastOrient = now;
-    Orientation::Mode m = Orientation::poll();
-    if (m != Orientation::UNKNOWN) {
-      Serial.print("Orientation: ");
-      Serial.println(m == Orientation::LANDSCAPE ? "landscape" : "portrait");
-      LvglUI::setOrientation(m == Orientation::LANDSCAPE);
+    int8_t rot = Orientation::poll();
+    if (rot != Orientation::UNCHANGED) {
+      Serial.print("Orientation: rotation ");
+      Serial.println(rot);
+      LvglUI::setOrientation((uint8_t)rot);
       if (g_hasData) drawCard(g_card);
     }
   }
@@ -418,7 +418,6 @@ void showError(const char* title, const char* detail)
 
 void drawCard(uint8_t)  // card argument unused — full dashboard always shown
 {
-  LvglUI::setHeader(g_city.length() > 0 ? g_city.c_str() : "-", g_loc->code);
   LvglUI::setIndoor(g_loc->indoor, g_loc->humidity,
                     toDisplayTemp(g_indoorTemp), g_indoorHumidity, g_loc->temp_unit);
   LvglUI::setOutdoor(g_loc->outdoor, g_loc->pressure, g_loc->pressure_unit,

@@ -14,12 +14,13 @@ namespace LvglUI {
 // (with placeholder values) underneath a hidden modal overlay.
 void init();
 
-// Switch the dashboard between landscape (320x172) and portrait (172x320)
-// layouts. Rotates the panel, updates LVGL display dimensions, and rebuilds
-// the entire widget tree. Caller must re-trigger setHeader/setIndoor/etc.
-// afterwards to repopulate values; the new widgets start with placeholders.
-// No-op if the requested orientation is already current.
-void setOrientation(bool landscape);
+// Set the panel rotation 0-3 (Arduino_GFX convention).
+// 0,2 are portrait (172x320); 1,3 are landscape (320x172). Flipping within
+// the same aspect (1<->3 or 0<->2) just calls gfx->setRotation and triggers
+// a redraw. Switching aspect (landscape<->portrait) also rebuilds the
+// widget tree, after which the caller must re-trigger setIndoor/setOutdoor/
+// setRain to repopulate values. No-op if the rotation hasn't changed.
+void setOrientation(uint8_t rotation);
 
 // Call from loop() to let LVGL process timers and animations.
 void tick();
@@ -35,7 +36,6 @@ void showLocale(const char* name, const char* code);
 void showError(const char* title, const char* detail, const char* retrying);
 
 // Update individual dashboard regions; hides the modal as a side effect.
-void setHeader(const char* city, const char* localeCode);
 void setIndoor(const char* label, const char* humidityLabel,
                float tempDisp, int humidity, const char* tempUnit);
 void setOutdoor(const char* label, const char* pressureLabel, const char* pressureUnit,

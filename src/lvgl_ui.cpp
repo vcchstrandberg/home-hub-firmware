@@ -170,10 +170,6 @@ static String stripAccents(const char* src) {
 // ─── Widget pointers ──────────────────────────────────────────────────────────
 struct {
   // Dashboard
-  lv_obj_t* header;
-  lv_obj_t* city_label;
-  lv_obj_t* locale_label;
-
   lv_obj_t* indoor_card;
   lv_obj_t* indoor_name;       // "INNE"
   lv_obj_t* indoor_temp;       // big number, e.g. "24.6"
@@ -208,8 +204,10 @@ static void styleContainer(lv_obj_t* obj, uint32_t bgColor, uint32_t borderColor
   lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
 }
 
-// Track current orientation so setOrientation can skip no-op calls.
-static bool s_isLandscape = true;
+// Track current panel rotation (Arduino_GFX convention, 0-3) so setOrientation
+// can skip no-op calls and decide whether a widget rebuild is needed.
+static uint8_t s_rotation = 1;
+static inline bool isLandscapeRotation(uint8_t r) { return r == 1 || r == 3; }
 
 // Shared helpers used by both layout builders.
 static void resetScreen() {
@@ -259,27 +257,6 @@ static lv_obj_t* createTempCard(lv_obj_t* parent, int x, int y, int w, int h,
   return card;
 }
 
-// Header bar: city left, locale right. Same in both orientations, only width
-// changes.
-static void createHeader(lv_obj_t* parent, int w) {
-  ui.header = lv_obj_create(parent);
-  lv_obj_set_size(ui.header, w, 24);
-  lv_obj_set_pos(ui.header, 0, 0);
-  styleContainer(ui.header, COL_HEADER_BG, 0, 0, 0, 0);
-
-  ui.city_label = lv_label_create(ui.header);
-  lv_label_set_text(ui.city_label, "-");
-  lv_obj_set_style_text_color(ui.city_label, lv_color_white(), 0);
-  lv_obj_set_style_text_font(ui.city_label, &lv_font_montserrat_14, 0);
-  lv_obj_align(ui.city_label, LV_ALIGN_LEFT_MID, 6, 0);
-
-  ui.locale_label = lv_label_create(ui.header);
-  lv_label_set_text(ui.locale_label, "--");
-  lv_obj_set_style_text_color(ui.locale_label, lv_color_hex(COL_DETAIL), 0);
-  lv_obj_set_style_text_font(ui.locale_label, &lv_font_montserrat_12, 0);
-  lv_obj_align(ui.locale_label, LV_ALIGN_RIGHT_MID, -10, 0);
-}
-
 // Modal overlay: full-screen, hidden by default. Used for splash, connecting,
 // locale-cycle hint, and error messages.
 static void createModal(lv_obj_t* parent, int w, int h) {
@@ -301,98 +278,92 @@ static void createModal(lv_obj_t* parent, int w, int h) {
 }
 
 // ─── Landscape layout (320 x 172) ─────────────────────────────────────────────
+// No header — every row is data. Indoor + outdoor cards at top, rain card
+// across the bottom (styled like the temp cards: navy bg, teal accent border).
 static void buildLandscape() {
   resetScreen();
   lv_obj_t* scr = lv_scr_act();
 
-  createHeader(scr, 320);
-
-  // Two cards side by side at y=28; rain row across the bottom.
-  createTempCard(scr,  2, 28, 156, 102, COL_INDOOR_ACC,  "INNE",
+  createTempCard(scr,  2, 2, 156, 102, COL_INDOOR_ACC,  "INNE",
                  &ui.indoor_name,  &ui.indoor_temp,  &ui.indoor_unit,  &ui.indoor_humidity);
-  createTempCard(scr, 162, 28, 156, 102, COL_OUTDOOR_ACC, "UTE",
+  createTempCard(scr, 162, 2, 156, 102, COL_OUTDOOR_ACC, "UTE",
                  &ui.outdoor_name, &ui.outdoor_temp, &ui.outdoor_unit, &ui.outdoor_pressure);
 
+  // Rain card: spans full width, card-styled to match indoor/outdoor.
   ui.rain_row = lv_obj_create(scr);
-  lv_obj_set_size(ui.rain_row, 320, 42);
-  lv_obj_set_pos(ui.rain_row, 0, 130);
-  styleContainer(ui.rain_row, COL_RAIN_BG, 0, 0, 0, 4);
+  lv_obj_set_size(ui.rain_row, 316, 60);
+  lv_obj_set_pos(ui.rain_row, 2, 108);
+  styleContainer(ui.rain_row, COL_CARD_BG, COL_RAIN_BG, 1, 5, 6);
 
   ui.rain_label = lv_label_create(ui.rain_row);
   lv_label_set_text(ui.rain_label, "REGN");
-  lv_obj_set_style_text_color(ui.rain_label, lv_color_white(), 0);
-  lv_obj_set_style_text_font(ui.rain_label, &lv_font_montserrat_20, 0);
-  lv_obj_align(ui.rain_label, LV_ALIGN_LEFT_MID, 4, 0);
-
-  ui.rain_droplet = lv_obj_create(ui.rain_row);
-  lv_obj_set_size(ui.rain_droplet, 12, 12);
-  styleContainer(ui.rain_droplet, 0xFFFFFF, 0, 0, 6, 0);
-  lv_obj_align(ui.rain_droplet, LV_ALIGN_LEFT_MID, 64, 0);
-  lv_obj_add_flag(ui.rain_droplet, LV_OBJ_FLAG_HIDDEN);
-
-  // Pull "1h" far enough left that the gap to the right-aligned "24h"
-  // never closes, regardless of unit width (Montserrat 'mm' is much
-  // wider than 'in', so 'mm' locales need the wider spacing).
-  ui.rain_1h = lv_label_create(ui.rain_row);
-  lv_label_set_text(ui.rain_1h, "1h: --");
-  lv_obj_set_style_text_color(ui.rain_1h, lv_color_white(), 0);
-  lv_obj_set_style_text_font(ui.rain_1h, &lv_font_montserrat_20, 0);
-  lv_obj_align(ui.rain_1h, LV_ALIGN_LEFT_MID, 80, 0);
-
-  ui.rain_24h = lv_label_create(ui.rain_row);
-  lv_label_set_text(ui.rain_24h, "24h: --");
-  lv_obj_set_style_text_color(ui.rain_24h, lv_color_white(), 0);
-  lv_obj_set_style_text_font(ui.rain_24h, &lv_font_montserrat_20, 0);
-  lv_obj_align(ui.rain_24h, LV_ALIGN_RIGHT_MID, -4, 0);
-
-  createModal(scr, 320, 172);
-}
-
-// ─── Portrait layout (172 x 320) ──────────────────────────────────────────────
-// Stacked: header on top, indoor + outdoor cards stacked below, then a
-// two-line rain row at the bottom (1h and 24h stacked since the row is narrow).
-static void buildPortrait() {
-  resetScreen();
-  lv_obj_t* scr = lv_scr_act();
-
-  createHeader(scr, 172);
-
-  // Cards: 168 wide, 102 tall, stacked.
-  createTempCard(scr, 2, 28,  168, 102, COL_INDOOR_ACC,  "INNE",
-                 &ui.indoor_name,  &ui.indoor_temp,  &ui.indoor_unit,  &ui.indoor_humidity);
-  createTempCard(scr, 2, 134, 168, 102, COL_OUTDOOR_ACC, "UTE",
-                 &ui.outdoor_name, &ui.outdoor_temp, &ui.outdoor_unit, &ui.outdoor_pressure);
-
-  // Rain row: at 20pt a single line of "1h: 0.0mm" no longer fits next to
-  // "REGN" within 172px wide, so we stack three lines: REGN header on top,
-  // 1h in the middle, 24h at the bottom.
-  ui.rain_row = lv_obj_create(scr);
-  lv_obj_set_size(ui.rain_row, 172, 80);
-  lv_obj_set_pos(ui.rain_row, 0, 238);
-  styleContainer(ui.rain_row, COL_RAIN_BG, 0, 0, 0, 4);
-
-  ui.rain_label = lv_label_create(ui.rain_row);
-  lv_label_set_text(ui.rain_label, "REGN");
-  lv_obj_set_style_text_color(ui.rain_label, lv_color_white(), 0);
-  lv_obj_set_style_text_font(ui.rain_label, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_color(ui.rain_label, lv_color_hex(COL_RAIN_BG), 0);
+  lv_obj_set_style_text_font(ui.rain_label, &lv_font_montserrat_14, 0);
   lv_obj_align(ui.rain_label, LV_ALIGN_TOP_LEFT, 0, 0);
 
   ui.rain_droplet = lv_obj_create(ui.rain_row);
   lv_obj_set_size(ui.rain_droplet, 12, 12);
   styleContainer(ui.rain_droplet, 0xFFFFFF, 0, 0, 6, 0);
-  lv_obj_align(ui.rain_droplet, LV_ALIGN_TOP_RIGHT, 0, 4);
+  lv_obj_align(ui.rain_droplet, LV_ALIGN_TOP_LEFT, 48, 2);
+  lv_obj_add_flag(ui.rain_droplet, LV_OBJ_FLAG_HIDDEN);
+
+  // Big values on the bottom row of the card, 24pt for readability.
+  ui.rain_1h = lv_label_create(ui.rain_row);
+  lv_label_set_text(ui.rain_1h, "1h: --");
+  lv_obj_set_style_text_color(ui.rain_1h, lv_color_white(), 0);
+  lv_obj_set_style_text_font(ui.rain_1h, &lv_font_montserrat_24, 0);
+  lv_obj_align(ui.rain_1h, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+
+  ui.rain_24h = lv_label_create(ui.rain_row);
+  lv_label_set_text(ui.rain_24h, "24h: --");
+  lv_obj_set_style_text_color(ui.rain_24h, lv_color_white(), 0);
+  lv_obj_set_style_text_font(ui.rain_24h, &lv_font_montserrat_24, 0);
+  lv_obj_align(ui.rain_24h, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+
+  createModal(scr, 320, 172);
+}
+
+// ─── Portrait layout (172 x 320) ──────────────────────────────────────────────
+// No header. Indoor + outdoor cards stacked top, rain card at the bottom
+// with more vertical room (104 px tall) so values can also be 24pt.
+static void buildPortrait() {
+  resetScreen();
+  lv_obj_t* scr = lv_scr_act();
+
+  createTempCard(scr, 2, 2,   168, 102, COL_INDOOR_ACC,  "INNE",
+                 &ui.indoor_name,  &ui.indoor_temp,  &ui.indoor_unit,  &ui.indoor_humidity);
+  createTempCard(scr, 2, 108, 168, 102, COL_OUTDOOR_ACC, "UTE",
+                 &ui.outdoor_name, &ui.outdoor_temp, &ui.outdoor_unit, &ui.outdoor_pressure);
+
+  // Rain card: full width, card-styled. Three lines (small REGN header,
+  // then 1h and 24h values stacked at 24pt).
+  ui.rain_row = lv_obj_create(scr);
+  lv_obj_set_size(ui.rain_row, 168, 104);
+  lv_obj_set_pos(ui.rain_row, 2, 214);
+  styleContainer(ui.rain_row, COL_CARD_BG, COL_RAIN_BG, 1, 5, 6);
+
+  ui.rain_label = lv_label_create(ui.rain_row);
+  lv_label_set_text(ui.rain_label, "REGN");
+  lv_obj_set_style_text_color(ui.rain_label, lv_color_hex(COL_RAIN_BG), 0);
+  lv_obj_set_style_text_font(ui.rain_label, &lv_font_montserrat_14, 0);
+  lv_obj_align(ui.rain_label, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  ui.rain_droplet = lv_obj_create(ui.rain_row);
+  lv_obj_set_size(ui.rain_droplet, 12, 12);
+  styleContainer(ui.rain_droplet, 0xFFFFFF, 0, 0, 6, 0);
+  lv_obj_align(ui.rain_droplet, LV_ALIGN_TOP_RIGHT, 0, 2);
   lv_obj_add_flag(ui.rain_droplet, LV_OBJ_FLAG_HIDDEN);
 
   ui.rain_1h = lv_label_create(ui.rain_row);
   lv_label_set_text(ui.rain_1h, "1h: --");
   lv_obj_set_style_text_color(ui.rain_1h, lv_color_white(), 0);
-  lv_obj_set_style_text_font(ui.rain_1h, &lv_font_montserrat_20, 0);
-  lv_obj_align(ui.rain_1h, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_set_style_text_font(ui.rain_1h, &lv_font_montserrat_24, 0);
+  lv_obj_align(ui.rain_1h, LV_ALIGN_LEFT_MID, 0, 4);
 
   ui.rain_24h = lv_label_create(ui.rain_row);
   lv_label_set_text(ui.rain_24h, "24h: --");
   lv_obj_set_style_text_color(ui.rain_24h, lv_color_white(), 0);
-  lv_obj_set_style_text_font(ui.rain_24h, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_font(ui.rain_24h, &lv_font_montserrat_24, 0);
   lv_obj_align(ui.rain_24h, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
   createModal(scr, 172, 320);
@@ -460,29 +431,32 @@ void LvglUI::init() {
   s_indev_drv.read_cb = touchpad_read_cb;
   lv_indev_drv_register(&s_indev_drv);
 
-  s_isLandscape = true;
+  s_rotation = 1;
   buildLandscape();
 }
 
-void LvglUI::setOrientation(bool landscape) {
-  if (landscape == s_isLandscape) return;
-  s_isLandscape = landscape;
+void LvglUI::setOrientation(uint8_t rotation) {
+  if (rotation > 3) return;
+  if (rotation == s_rotation) return;
 
-  // Rotate the panel hardware. Arduino_GFX rotations:
-  //   0 = portrait, 1 = landscape, 2 = portrait flipped, 3 = landscape flipped.
-  // The IMU poller only reports two states (LANDSCAPE/PORTRAIT) so we use the
-  // canonical orientations here. Could extend to flipped variants later by
-  // checking the sign of the dominant accel axis.
-  s_gfx->setRotation(landscape ? 1 : 0);
+  bool aspectChanged = isLandscapeRotation(rotation) != isLandscapeRotation(s_rotation);
+  s_rotation = rotation;
+  s_gfx->setRotation(rotation);
 
-  uint32_t w = s_gfx->width();
-  uint32_t h = s_gfx->height();
-  s_disp_drv.hor_res = w;
-  s_disp_drv.ver_res = h;
-  lv_disp_drv_update(lv_disp_get_default(), &s_disp_drv);
+  if (aspectChanged) {
+    uint32_t w = s_gfx->width();
+    uint32_t h = s_gfx->height();
+    s_disp_drv.hor_res = w;
+    s_disp_drv.ver_res = h;
+    lv_disp_drv_update(lv_disp_get_default(), &s_disp_drv);
 
-  if (landscape) buildLandscape();
-  else           buildPortrait();
+    if (isLandscapeRotation(rotation)) buildLandscape();
+    else                                buildPortrait();
+  } else {
+    // Same aspect (e.g. 1↔3) — widget tree is reusable; just force a redraw
+    // so existing widgets render at the new physical orientation.
+    lv_obj_invalidate(lv_scr_act());
+  }
 
   // Touch coordinates may be reported in the old frame until next bsp_touch
   // re-init, but we only use press/release edges (tap detection), not coords,
@@ -529,12 +503,6 @@ void LvglUI::showError(const char* title, const char* detail, const char* retryi
   if (detail && *detail) { t += "\n"; t += detail; }
   if (retrying && *retrying) { t += "\n"; t += stripAccents(retrying); }
   showModal(t.c_str(), COL_ERROR_BG);
-}
-
-void LvglUI::setHeader(const char* city, const char* localeCode) {
-  hideModal();
-  lv_label_set_text(ui.city_label,   stripAccents(city && *city ? city : "-").c_str());
-  lv_label_set_text(ui.locale_label, localeCode ? localeCode : "--");
 }
 
 void LvglUI::setIndoor(const char* label, const char* humidityLabel,
