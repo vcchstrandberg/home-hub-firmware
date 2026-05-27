@@ -4,6 +4,7 @@
 
 // ── Platform selection ────────────────────────────────────────────────────────
 // WAVESHARE_ESP32C6_LCD  — Waveshare ESP32-C6 Touch LCD 1.47 (integrated TFT)
+// ESP32C6_ZERO           — Waveshare ESP32-C6-Zero + external SSD1306 (I2C GPIO23/22)
 // ESP32CAM               — AI-Thinker ESP32-CAM + external SSD1306 (I2C GPIO14/15)
 // ESP32                  — generic ESP32 DevKit + external SSD1306 (I2C GPIO21/22)
 // (neither)              — Arduino Uno R4 WiFi + external SSD1306 (I2C)
@@ -13,6 +14,12 @@
 #ifdef WAVESHARE_ESP32C6_LCD
 #  include "lvgl_ui.h"
 #  include "orientation.h"
+#  include <WiFi.h>
+#  include <HTTPClient.h>
+#  define BUTTON_PIN 9
+#elif defined(ESP32C6_ZERO)
+#  include <U8g2lib.h>
+#  include <Wire.h>
 #  include <WiFi.h>
 #  include <HTTPClient.h>
 #  define BUTTON_PIN 9

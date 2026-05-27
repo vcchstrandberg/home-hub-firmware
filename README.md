@@ -9,6 +9,7 @@ Devices call `GET http://<pi>:8080/weather` and render the response. No tokens, 
 | Environment | Board | MCU | Display | Inputs |
 |---|---|---|---|---|
 | `esp32c6_waveshare_lcd` | Waveshare ESP32-C6 Touch LCD 1.47 | ESP32-C6 RISC-V, 160 MHz | Integrated 172×320 IPS TFT (JD9853) | Capacitive touch (AXS5106L), accelerometer (QMI8658), BOOT button |
+| `esp32c6_zero` | Waveshare ESP32-C6-Zero | ESP32-C6 RISC-V, 160 MHz | SSD1306 128×64 OLED (GPIO23/22) | BOOT button (GPIO9) |
 | `esp32cam` | AI-Thinker ESP32-CAM | Xtensa LX6, 240 MHz | SSD1306 128×64 OLED (GPIO14/15) | BOOT button |
 | `esp32dev` | Generic ESP32 DevKit | Xtensa LX6, 240 MHz | SSD1306 128×64 OLED (GPIO21/22) | BOOT button |
 | `uno_r4_wifi` | Arduino Uno R4 WiFi | Renesas RA4M1, 48 MHz | SSD1306 128×64 OLED (A4/A5) | D7 button |
@@ -46,6 +47,7 @@ home-hub-firmware/
 ├── scripts/version.py                 # injects git commit hash at build time
 ├── include/
 │   ├── esp32c6_waveshare_lcd/         # lvgl_ui.h, orientation.h, lv_conf.h, arduino_secrets.h
+│   ├── esp32c6_zero/                  # arduino_secrets.h
 │   ├── esp32cam/                      # arduino_secrets.h
 │   ├── esp32dev/                      # arduino_secrets.h
 │   └── uno_r4_wifi/                   # arduino_secrets.h

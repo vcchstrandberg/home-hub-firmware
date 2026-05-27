@@ -18,6 +18,7 @@ home-hub-firmware/
 │   │   ├── orientation.h              # orientation poller API
 │   │   ├── lv_conf.h                  # LVGL build config (committed)
 │   │   └── arduino_secrets.h          # you create this (gitignored)
+│   ├── esp32c6_zero/arduino_secrets.h # you create this (gitignored)
 │   ├── esp32cam/arduino_secrets.h     # you create this (gitignored)
 │   ├── esp32dev/arduino_secrets.h     # you create this (gitignored)
 │   └── uno_r4_wifi/arduino_secrets.h  # you create this (gitignored)
@@ -42,6 +43,7 @@ Create the secrets file for your board in its include directory:
 | ESP32 DevKit | `include/esp32dev/arduino_secrets.h` |
 | Arduino Uno R4 WiFi | `include/uno_r4_wifi/arduino_secrets.h` |
 | Waveshare ESP32-C6 Touch LCD | `include/esp32c6_waveshare_lcd/arduino_secrets.h` |
+| Waveshare ESP32-C6-Zero | `include/esp32c6_zero/arduino_secrets.h` |
 
 All four files use the same format — five values:
 
@@ -91,16 +93,18 @@ From the repo root:
 pio run -e esp32cam
 pio run -e esp32dev
 pio run -e uno_r4_wifi
+pio run -e esp32c6_zero
 pio run -e esp32c6_waveshare_lcd
 
 # Compile and upload
 pio run -e esp32cam               --target upload
 pio run -e esp32dev               --target upload
 pio run -e uno_r4_wifi            --target upload
+pio run -e esp32c6_zero           --target upload
 pio run -e esp32c6_waveshare_lcd  --target upload
 ```
 
-The first build for each environment downloads the required toolchain and libraries automatically. The C6 build fetches the pioarduino platform (~300 MB, one-time) plus Arduino_GFX, LVGL, and FastIMU.
+The first build for each environment downloads the required toolchain and libraries automatically. The two C6 targets share the pioarduino platform (~300 MB, one-time); the Touch LCD env additionally pulls Arduino_GFX, LVGL, and FastIMU.
 
 ---
 
@@ -122,6 +126,16 @@ USB-C cable only — **never** connect an FTDI adapter at the same time, the UAR
 
 ```bash
 pio run -e esp32c6_waveshare_lcd --target upload
+```
+
+---
+
+## Waveshare ESP32-C6-Zero flashing
+
+USB-C only, same auto-reset behaviour as the Touch LCD — enumerates as `/dev/cu.usbmodem2301`. The build flags `-DARDUINO_USB_MODE=1 -DARDUINO_USB_CDC_ON_BOOT=1` route `Serial` to the USB-Serial-JTAG bridge; without them the default UART0 pins (GPIO16/17) are unconnected on this board.
+
+```bash
+pio run -e esp32c6_zero --target upload
 ```
 
 ---
@@ -149,6 +163,7 @@ Each board prints boot diagnostics and runtime status at 115200 baud:
 pio device monitor -e esp32cam
 pio device monitor -e esp32dev
 pio device monitor -e uno_r4_wifi
+pio device monitor -e esp32c6_zero
 pio device monitor -e esp32c6_waveshare_lcd
 ```
 
@@ -163,7 +178,7 @@ Orientation: portrait
 Locale: en-US
 ```
 
-> Note: on the C6 Touch LCD target, `Serial` is routed to the USB-Serial-JTAG bridge via the build flags `-DARDUINO_USB_MODE=1 -DARDUINO_USB_CDC_ON_BOOT=1`. Without these, the default Serial port (UART0) is unconnected on the Waveshare board.
+> Note: on both C6 targets (`esp32c6_waveshare_lcd` and `esp32c6_zero`), `Serial` is routed to the USB-Serial-JTAG bridge via the build flags `-DARDUINO_USB_MODE=1 -DARDUINO_USB_CDC_ON_BOOT=1`. Without these, the default Serial port (UART0) is unconnected on the Waveshare boards.
 
 If `pio device monitor` fails (e.g. in non-TTY contexts), use Python `pyserial` directly:
 
