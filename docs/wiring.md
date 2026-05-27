@@ -1,6 +1,6 @@
 # Wiring
 
-All display devices use a 128×64 SSD1306 OLED over I2C, except the Waveshare ESP32-C6 which has an integrated TFT — no external display needed.
+All display devices use a 128×64 SSD1306 OLED over I2C, except the Waveshare ESP32-C6 Touch LCD 1.47, which has an integrated TFT — no external display needed.
 
 The OLED typically has a fixed I2C address of `0x3C`. Power it from the board's 3.3 V rail (some breakouts accept 5 V too — check your module's datasheet).
 
@@ -46,6 +46,25 @@ To enter bootloader mode: connect **IO0 → GND**, then press RST (or power-cycl
 `Wire.begin()` is called without arguments — uses the hardware I2C defaults.
 
 **Locale button:** built-in **BOOT button (GPIO0)** — no external wiring needed.
+
+---
+
+## Waveshare ESP32-C6-Zero
+
+The C6-Zero exposes raw ESP32-C6 GPIOs on its 0.1″ headers — silkscreen labels match the GPIO numbers directly.
+
+| OLED pin | C6-Zero pin | GPIO | Notes |
+|---|---|---|---|
+| VCC | 3V3 | — | 3.3 V only |
+| GND | GND | — | |
+| SDA | 23 | GPIO23 | ESP32-C6 Arduino variant default SDA |
+| SCL | 22 | GPIO22 | ESP32-C6 Arduino variant default SCL |
+
+`Wire.begin()` is called without arguments — uses the C6 variant defaults (SDA=23, SCL=22).
+
+**Locale button:** built-in **BOOT button (GPIO9)** — no external wiring needed.
+
+**Flashing:** USB-C only, same auto-reset behaviour as the Touch LCD board — enumerates as `/dev/cu.usbmodem2301`. Serial output requires the USB-CDC build flags (already set for this env in `platformio.ini`); without them, `Serial.println()` writes to UART0 (GPIO16/17), which is unconnected on this board.
 
 ---
 
