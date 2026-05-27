@@ -51,16 +51,16 @@ To enter bootloader mode: connect **IO0 → GND**, then press RST (or power-cycl
 
 ## Waveshare ESP32-C6-Zero
 
-The C6-Zero exposes raw ESP32-C6 GPIOs on its 0.1″ headers — silkscreen labels match the GPIO numbers directly.
+The C6-Zero exposes raw ESP32-C6 GPIOs on its 0.1″ headers — silkscreen labels match the GPIO numbers directly. Note: GPIO 22 and 23 (the ESP32-C6 Arduino variant's default I2C pins) are **not** broken out, so the firmware explicitly initialises I2C on GPIO 6/7 instead — the variant's `Wire1` defaults, which Waveshare does break out.
 
 | OLED pin | C6-Zero pin | GPIO | Notes |
 |---|---|---|---|
 | VCC | 3V3 | — | 3.3 V only |
 | GND | GND | — | |
-| SDA | 23 | GPIO23 | ESP32-C6 Arduino variant default SDA |
-| SCL | 22 | GPIO22 | ESP32-C6 Arduino variant default SCL |
+| SDA | 6 | GPIO6 | `Wire1` default SDA in the C6 Arduino variant |
+| SCL | 7 | GPIO7 | `Wire1` default SCL in the C6 Arduino variant |
 
-`Wire.begin()` is called without arguments — uses the C6 variant defaults (SDA=23, SCL=22).
+`Wire.begin(6, 7)` is called explicitly in `setup()` for this target.
 
 **Locale button:** built-in **BOOT button (GPIO9)** — no external wiring needed.
 

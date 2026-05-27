@@ -4,7 +4,7 @@
 
 // ── Platform selection ────────────────────────────────────────────────────────
 // WAVESHARE_ESP32C6_LCD  — Waveshare ESP32-C6 Touch LCD 1.47 (integrated TFT)
-// ESP32C6_ZERO           — Waveshare ESP32-C6-Zero + external SSD1306 (I2C GPIO23/22)
+// ESP32C6_ZERO           — Waveshare ESP32-C6-Zero + external SSD1306 (I2C GPIO6/7)
 // ESP32CAM               — AI-Thinker ESP32-CAM + external SSD1306 (I2C GPIO14/15)
 // ESP32                  — generic ESP32 DevKit + external SSD1306 (I2C GPIO21/22)
 // (neither)              — Arduino Uno R4 WiFi + external SSD1306 (I2C)
@@ -185,6 +185,10 @@ void setup()
 #elif !defined(NO_DISPLAY)
 #  ifdef ESP32CAM
   Wire.begin(14, 15);
+#  elif defined(ESP32C6_ZERO)
+  // C6-Zero doesn't break out the variant default I2C pins (23/22),
+  // so call Wire.begin() explicitly with broken-out pins (Wire1 defaults).
+  Wire.begin(6, 7);
 #  else
   Wire.begin();
 #  endif
