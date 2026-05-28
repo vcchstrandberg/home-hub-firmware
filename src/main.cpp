@@ -361,7 +361,15 @@ void fetchWeatherData()
   client.print(PROXY_HOST);
   client.print("\r\nX-Device-Name: " DEVICE_NAME);
   client.print("\r\nX-Device-Id: ");
-  client.print(WiFi.macAddress());
+  // WiFiS3 has no String macAddress() overload (unlike the ESP32 WiFi lib),
+  // so fill a buffer and format it ourselves — otherwise this target fails to
+  // compile and the hub never receives a stable per-board identity.
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  char macStr[18];
+  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  client.print(macStr);
   client.print("\r\nConnection: close\r\n\r\n");
 
   unsigned long t = millis() + 5000;
