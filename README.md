@@ -58,6 +58,7 @@ home-hub-firmware/
 │   ├── display-basic/                 # standalone Arduino_GFX hardware verification sketch
 │   └── lvgl-basic/                    # standalone LVGL test sketch
 └── docs/
+    ├── architecture.md                # device boot/loop, software stack, hardware
     ├── configuration.md               # arduino_secrets, build, flash, serial
     ├── display-layout.md              # OLED card and C6 LVGL dashboard layouts
     ├── wiring.md                      # pin connections per board
@@ -78,6 +79,7 @@ Build either with `pio run` from inside its own directory.
 
 ## Documentation
 
+- [Architecture](docs/architecture.md) — device boot sequence, main loop, software stack, hardware overview
 - [Configuration](docs/configuration.md) — board secrets, building, flashing, serial
 - [Display layout](docs/display-layout.md) — OLED card designs and the C6 LVGL dashboard (landscape + portrait)
 - [Wiring](docs/wiring.md) — pin connections per board
