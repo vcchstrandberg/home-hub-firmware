@@ -401,7 +401,10 @@ void parseWeather(const String& json)
   // Hub-computed time-of-day backlight level (0-100). Absent on older hubs —
   // leave brightness untouched in that case.
   int backlight = doc["backlight"] | -1;
-  if (backlight >= 0) LvglUI::setBacklight((uint8_t)backlight);
+  if (backlight >= 0) {
+    Serial.print("Backlight: "); Serial.println(backlight);
+    LvglUI::setBacklight((uint8_t)backlight);
+  }
 #endif
 
   Serial.print("City: "); Serial.println(g_city);
