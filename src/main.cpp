@@ -397,6 +397,13 @@ void parseWeather(const String& json)
   g_hasData        = true;
   g_lastCardSwitch = millis();  // restart card timer so display shows full CARD_MS before switching
 
+#ifdef WAVESHARE_ESP32C6_LCD
+  // Hub-computed time-of-day backlight level (0-100). Absent on older hubs —
+  // leave brightness untouched in that case.
+  int backlight = doc["backlight"] | -1;
+  if (backlight >= 0) LvglUI::setBacklight((uint8_t)backlight);
+#endif
+
   Serial.print("City: "); Serial.println(g_city);
   Serial.print("In: ");   Serial.print(g_indoorTemp);  Serial.print("  Out: "); Serial.println(g_outdoorTemp);
   drawCard(g_card);

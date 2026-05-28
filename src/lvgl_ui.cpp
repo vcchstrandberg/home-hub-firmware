@@ -12,6 +12,9 @@
 
 // ─── Pin defs (Touch variant — see project_waveshare_touch_lcd_pinout memory) ──
 #define GFX_BL         23
+#define BL_PWM_FREQ    5000
+#define BL_PWM_BITS    8
+#define BL_PWM_MAX     ((1 << BL_PWM_BITS) - 1)
 #define TOUCH_I2C_SDA  18
 #define TOUCH_I2C_SCL  19
 #define TOUCH_RST      20
@@ -394,8 +397,10 @@ void LvglUI::init() {
   s_gfx->setRotation(1);             // landscape (matches existing layout)
   s_gfx->fillScreen(0x0000);
 
-  pinMode(GFX_BL, OUTPUT);
-  digitalWrite(GFX_BL, HIGH);
+  // Backlight on LEDC PWM so brightness is adjustable. Start at full; the
+  // first weather fetch hands us the hub's time-of-day level.
+  ledcAttach(GFX_BL, BL_PWM_FREQ, BL_PWM_BITS);
+  ledcWrite(GFX_BL, BL_PWM_MAX);
 
   lv_init();
 
@@ -433,6 +438,11 @@ void LvglUI::init() {
 
   s_rotation = 1;
   buildLandscape();
+}
+
+void LvglUI::setBacklight(uint8_t percent) {
+  if (percent > 100) percent = 100;
+  ledcWrite(GFX_BL, (uint32_t)percent * BL_PWM_MAX / 100);
 }
 
 void LvglUI::setOrientation(uint8_t rotation) {

@@ -25,6 +25,10 @@ void setOrientation(uint8_t rotation);
 // Call from loop() to let LVGL process timers and animations.
 void tick();
 
+// Set display backlight brightness, 0-100 %. Driven by LEDC PWM on the BL pin.
+// The hub computes the level (time-of-day dimming) and sends it in /weather.
+void setBacklight(uint8_t percent);
+
 // Register a callback fired once per touch tap (press + release).
 // Pass nullptr to disable. Replaces any previously-registered callback.
 void setOnTap(void (*callback)());
