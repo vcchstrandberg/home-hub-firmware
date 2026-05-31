@@ -4,6 +4,7 @@
 
 // ── Platform selection ────────────────────────────────────────────────────────
 // WAVESHARE_ESP32C6_LCD  — Waveshare ESP32-C6 Touch LCD 1.47 (integrated TFT)
+// ESP32C6_ZERO_TFT       — Waveshare ESP32-C6-Zero + external 2.4" ILI9341 SPI TFT
 // ESP32C6_ZERO           — Waveshare ESP32-C6-Zero + external SSD1306 (I2C GPIO6/7)
 // ESP32CAM               — AI-Thinker ESP32-CAM + external SSD1306 (I2C GPIO14/15)
 // ESP32                  — generic ESP32 DevKit + external SSD1306 (I2C GPIO21/22)
@@ -14,6 +15,11 @@
 #ifdef WAVESHARE_ESP32C6_LCD
 #  include "lvgl_ui.h"
 #  include "orientation.h"
+#  include <WiFi.h>
+#  include <HTTPClient.h>
+#  define BUTTON_PIN 9
+#elif defined(ESP32C6_ZERO_TFT)
+#  include "tft_ui.h"
 #  include <WiFi.h>
 #  include <HTTPClient.h>
 #  define BUTTON_PIN 9
@@ -116,11 +122,13 @@ int status = WL_IDLE_STATUS;
 // ── Display objects ───────────────────────────────────────────────────────────
 #ifdef WAVESHARE_ESP32C6_LCD
 // LVGL widget objects are owned by lvgl_ui.cpp; no globals needed here.
+#elif defined(ESP32C6_ZERO_TFT)
+// LovyanGFX panel object is owned by tft_ui.cpp; no globals needed here.
 #elif !defined(NO_DISPLAY)
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C oled(U8G2_R0, U8X8_PIN_NONE);
 #endif
 
-#if !defined(WAVESHARE_ESP32C6_LCD) && !defined(NO_DISPLAY)
+#if !defined(WAVESHARE_ESP32C6_LCD) && !defined(ESP32C6_ZERO_TFT) && !defined(NO_DISPLAY)
 static const uint8_t rain_drop_bmp[] PROGMEM = {
     0x18, 0x3C, 0x7E, 0xFF, 0xFF, 0x7E, 0x3C, 0x18,
 };
@@ -142,6 +150,9 @@ uint8_t       g_card           = 0;
 unsigned long g_lastCardSwitch = 0;
 unsigned long g_lastFetch      = 0;
 #ifdef WAVESHARE_ESP32C6_LCD
+const unsigned long CARD_MS  = 86400000UL; // effectively never — full dashboard always shown
+const unsigned long FETCH_MS = 300000;
+#elif defined(ESP32C6_ZERO_TFT)
 const unsigned long CARD_MS  = 86400000UL; // effectively never — full dashboard always shown
 const unsigned long FETCH_MS = 300000;
 #elif defined(ESP32)
@@ -182,6 +193,11 @@ void setup()
   unsigned long splashUntil = millis() + 5000;
   while (millis() < splashUntil) { LvglUI::tick(); delay(20); }
 
+#elif defined(ESP32C6_ZERO_TFT)
+  TftUI::init();
+  TftUI::showBootSplash(APP_VERSION, __DATE__, GIT_COMMIT);
+  delay(5000);
+
 #elif !defined(NO_DISPLAY)
 #  ifdef ESP32CAM
   Wire.begin(14, 15);
@@ -218,6 +234,8 @@ void setup()
 #ifdef WAVESHARE_ESP32C6_LCD
   LvglUI::showConnecting(g_loc->connecting, ssid);
   LvglUI::tick();
+#elif defined(ESP32C6_ZERO_TFT)
+  TftUI::showConnecting(g_loc->connecting, ssid);
 #elif !defined(NO_DISPLAY)
   oled.setFont(u8g2_font_ncenB08_tr);
   oled.clearBuffer();
@@ -255,6 +273,9 @@ void showLocale()
   LvglUI::showLocale(g_loc->name, g_loc->code);
   unsigned long until = millis() + 1500;
   while (millis() < until) { LvglUI::tick(); delay(20); }
+#elif defined(ESP32C6_ZERO_TFT)
+  TftUI::showLocale(g_loc->name, g_loc->code);
+  delay(1500);
 #elif !defined(NO_DISPLAY)
   oled.clearBuffer();
   oled.setFont(u8g2_font_ncenB08_tr);
@@ -426,6 +447,8 @@ void showError(const char* title, const char* detail)
 #ifdef WAVESHARE_ESP32C6_LCD
   LvglUI::showError(title, detail, g_loc->retrying);
   LvglUI::tick();
+#elif defined(ESP32C6_ZERO_TFT)
+  TftUI::showError(title, detail, g_loc->retrying);
 #elif !defined(NO_DISPLAY)
   oled.clearBuffer();
   oled.setFont(u8g2_font_open_iconic_embedded_2x_t);
@@ -454,6 +477,21 @@ void drawCard(uint8_t)  // card argument unused — full dashboard always shown
                      g_loc->pressure_decimals, g_loc->temp_unit);
   LvglUI::setRain(g_loc->rain, g_loc->rain_unit, g_loc->rain_decimals,
                   toDisplayRain(g_rain1h), toDisplayRain(g_rain24h), g_isRaining);
+}
+
+#elif defined(ESP32C6_ZERO_TFT)
+
+void drawCard(uint8_t)  // card argument unused — full dashboard always shown
+{
+  TftUI::drawDashboard(
+      g_loc->indoor, g_loc->humidity,
+      toDisplayTemp(g_indoorTemp), g_indoorHumidity, g_loc->temp_unit,
+      g_city.length() > 0 ? g_city.c_str() : g_loc->outdoor,
+      g_loc->pressure, g_loc->pressure_unit,
+      toDisplayTemp(g_outdoorTemp), toDisplayPressure(g_airPressure),
+      g_loc->pressure_decimals,
+      g_loc->rain, g_loc->rain_unit, g_loc->rain_decimals,
+      toDisplayRain(g_rain1h), toDisplayRain(g_rain24h), g_isRaining);
 }
 
 #elif !defined(NO_DISPLAY)
