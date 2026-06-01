@@ -132,39 +132,37 @@ void drawDashboard(const char* indoorLabel, const char* humidityLabel,
   tft.fillScreen(TFT_BLACK);
   char buf[32];
 
-  // Header
-  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-  tft.setTextSize(2);
-  tft.setCursor(6, 8);
-  tft.print("WEATHER STATION");
-  tft.drawFastHLine(0, 30, W, TFT_DARKGREY);
+  // No title bar: the section labels (indoor/outdoor/rain) come from the
+  // active locale, so a hardcoded English title would be out of place. The
+  // layout is kept within the rotation-6 panel's safe vertical budget
+  // (~y<=230) — this clone wraps content drawn lower back to the top.
 
   // Indoor
-  label(38, indoorLabel);
+  label(10, indoorLabel);
   snprintf(buf, sizeof(buf), "%.1f %s", indoorTemp, tempUnit);
-  value(52, 4, buf);
+  value(24, 4, buf);
   snprintf(buf, sizeof(buf), "%s%d%%", humidityLabel, indoorHumidity);
-  label(96, buf);
-  tft.drawFastHLine(0, 116, W, TFT_DARKGREY);
+  label(64, buf);
+  tft.drawFastHLine(0, 80, W, TFT_DARKGREY);
 
   // Outdoor
-  label(124, outdoorLabel);
+  label(90, outdoorLabel);
   snprintf(buf, sizeof(buf), "%.1f %s", outdoorTemp, tempUnit);
-  value(138, 4, buf);
+  value(104, 4, buf);
   snprintf(buf, sizeof(buf), "%s%.*f %s", pressureLabel,
            (int)pressureDecimals, pressure, pressureUnit);
-  label(182, buf);
-  tft.drawFastHLine(0, 202, W, TFT_DARKGREY);
+  label(144, buf);
+  tft.drawFastHLine(0, 160, W, TFT_DARKGREY);
 
   // Rain
-  label(210, rainLabel);
+  label(170, rainLabel);
   if (isRaining) {
-    tft.fillCircle(W - 18, 214, 6, TFT_CYAN);
+    tft.fillCircle(W - 18, 174, 6, TFT_CYAN);
   }
   snprintf(buf, sizeof(buf), "1h:  %.*f %s", (int)rainDecimals, rain1h, rainUnit);
-  value(228, 2, buf);
+  value(186, 2, buf);
   snprintf(buf, sizeof(buf), "24h: %.*f %s", (int)rainDecimals, rain24h, rainUnit);
-  value(258, 2, buf);
+  value(212, 2, buf);
 }
 
 } // namespace TftUI
