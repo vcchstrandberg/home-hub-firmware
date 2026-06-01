@@ -39,7 +39,9 @@
 #  include <U8g2lib.h>
 #  include <Wire.h>
 #  include "WiFiS3.h"
+#  include "Arduino_LED_Matrix.h"   // onboard 12x8 LED matrix (UNO R4 WiFi)
 #  define BUTTON_PIN 7
+#  define HAS_LED_MATRIX 1
 #endif
 
 // ── Locale ────────────────────────────────────────────────────────────────────
@@ -128,6 +130,40 @@ int status = WL_IDLE_STATUS;
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C oled(U8G2_R0, U8X8_PIN_NONE);
 #endif
 
+// ── Onboard LED matrix (UNO R4 WiFi): WiFi-state smiley ───────────────────────
+#ifdef HAS_LED_MATRIX
+ArduinoLEDMatrix matrix;
+
+// 12 columns x 8 rows. Happy when WiFi is connected, sad when it isn't.
+// Row 0 is the BOTTOM of the matrix on this board, so the faces are authored
+// bottom-up: mouth in the low rows, eyes in the high rows.
+byte FACE_HAPPY[8][12] = {
+  { 0,0,0,1,1,1,1,1,1,0,0,0 },  // smile bottom
+  { 0,0,1,0,0,0,0,0,0,1,0,0 },
+  { 0,1,0,0,0,0,0,0,0,0,1,0 },  // smile corners up
+  { 0,1,0,0,0,0,0,0,0,0,1,0 },
+  { 0,0,0,0,0,0,0,0,0,0,0,0 },
+  { 0,0,1,0,0,0,0,0,0,1,0,0 },  // eyes
+  { 0,0,1,0,0,0,0,0,0,1,0,0 },
+  { 0,0,0,0,0,0,0,0,0,0,0,0 },
+};
+byte FACE_SAD[8][12] = {
+  { 0,1,0,0,0,0,0,0,0,0,1,0 },  // frown corners down
+  { 0,1,0,0,0,0,0,0,0,0,1,0 },
+  { 0,0,1,0,0,0,0,0,0,1,0,0 },
+  { 0,0,0,1,1,1,1,1,1,0,0,0 },  // frown top
+  { 0,0,0,0,0,0,0,0,0,0,0,0 },
+  { 0,0,1,0,0,0,0,0,0,1,0,0 },  // eyes
+  { 0,0,1,0,0,0,0,0,0,1,0,0 },
+  { 0,0,0,0,0,0,0,0,0,0,0,0 },
+};
+
+void showFace(bool connected) {
+  if (connected) matrix.renderBitmap(FACE_HAPPY, 8, 12);
+  else           matrix.renderBitmap(FACE_SAD, 8, 12);
+}
+#endif
+
 #if !defined(WAVESHARE_ESP32C6_LCD) && !defined(ESP32C6_ZERO_TFT) && !defined(NO_DISPLAY)
 static const uint8_t rain_drop_bmp[] PROGMEM = {
     0x18, 0x3C, 0x7E, 0xFF, 0xFF, 0x7E, 0x3C, 0x18,
@@ -180,6 +216,11 @@ void setup()
   unsigned long serialDeadline = millis() + 3000;
   while (!Serial && millis() < serialDeadline) { ; }
   Serial.println("=== Boot ===");
+
+#ifdef HAS_LED_MATRIX
+  matrix.begin();
+  showFace(false);  // sad until WiFi connects
+#endif
 
 #ifdef WAVESHARE_ESP32C6_LCD
   LvglUI::init();
@@ -261,6 +302,10 @@ void setup()
   }
 #endif
 
+#ifdef HAS_LED_MATRIX
+  showFace(WiFi.status() == WL_CONNECTED);  // happy once we're online
+#endif
+
   fetchWeatherData();
   g_lastFetch      = millis();
   g_lastCardSwitch = millis();
@@ -309,6 +354,16 @@ void loop()
     lastPress = now;
     cycleLocale();
   }
+
+#ifdef HAS_LED_MATRIX
+  // Keep the onboard smiley in sync with WiFi state (only redraw on change).
+  static bool lastConnected = true;  // setup() set happy after connecting
+  bool connected = (WiFi.status() == WL_CONNECTED);
+  if (connected != lastConnected) {
+    lastConnected = connected;
+    showFace(connected);
+  }
+#endif
 
 #ifdef WAVESHARE_ESP32C6_LCD
   // Poll the accelerometer ~4 Hz. The poller does its own debouncing and
