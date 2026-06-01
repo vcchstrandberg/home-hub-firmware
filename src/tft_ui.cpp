@@ -48,29 +48,42 @@ public:
 
 static LGFX tft;
 
-static const int W = 240; // panel width  at rotation 6
-static const int H = 320; // panel height at rotation 6
+// Orientation is selectable at build time via -DTFT_ROTATION in the env's
+// build_flags. On this clone the upright, non-mirrored options are the flipped
+// rotations: 5 = portrait (240x320, default), 6 = landscape (320x240). 7 / 4
+// are their 180-degree siblings. The layout below adapts to whatever
+// width()/height() the chosen rotation reports, so no other change is needed.
+#ifndef TFT_ROTATION
+#  define TFT_ROTATION 5  // portrait
+#endif
+
+static int gW = 240; // actual width  after setRotation (filled in init)
+static int gH = 320; // actual height after setRotation (filled in init)
 
 // ─── Small drawing helpers ────────────────────────────────────────────────────
-static void label(int y, const char* text) {
+static void labelAt(int x, int y, const char* text) {
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   tft.setTextSize(1);
-  tft.setCursor(6, y);
+  tft.setCursor(x, y);
   tft.print(text);
 }
 
-static void value(int y, int size, const char* text) {
+static void valueAt(int x, int y, int size, const char* text) {
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextSize(size);
-  tft.setCursor(6, y);
+  tft.setCursor(x, y);
   tft.print(text);
 }
+
+// Left-margin convenience wrappers (x = 6).
+static void label(int y, const char* text)            { labelAt(6, y, text); }
+static void value(int y, int size, const char* text)  { valueAt(6, y, size, text); }
 
 static void centered(int y, int size, uint16_t color, const char* text) {
   tft.setTextColor(color, TFT_BLACK);
   tft.setTextSize(size);
   int w = tft.textWidth(text);
-  tft.setCursor((W - w) / 2, y);
+  tft.setCursor((gW - w) / 2, y);
   tft.print(text);
 }
 
@@ -85,7 +98,9 @@ void init() {
     tft.setRotation(r);
     tft.fillScreen(TFT_BLACK);
   }
-  tft.setRotation(6);
+  tft.setRotation(TFT_ROTATION);
+  gW = tft.width();
+  gH = tft.height();
   tft.fillScreen(TFT_BLACK);
 }
 
@@ -133,36 +148,42 @@ void drawDashboard(const char* indoorLabel, const char* humidityLabel,
   char buf[32];
 
   // No title bar: the section labels (indoor/outdoor/rain) come from the
-  // active locale, so a hardcoded English title would be out of place. The
-  // layout is kept within the rotation-6 panel's safe vertical budget
-  // (~y<=230) — this clone wraps content drawn lower back to the top.
+  // active locale, so a hardcoded English title would be out of place.
+  //
+  // Single stacked layout. Auto-switching to a wide layout by aspect ratio
+  // proved unreliable on this clone (it misreports width/height for the
+  // flipped rotations it needs), so this sticks to the one layout that works.
+  const int sec = gH / 3;
 
-  // Indoor
-  label(10, indoorLabel);
+  // Indoor (section 0)
+  int b = 0;
+  label(b + 6, indoorLabel);
   snprintf(buf, sizeof(buf), "%.1f %s", indoorTemp, tempUnit);
-  value(24, 4, buf);
+  value(b + 20, 4, buf);
   snprintf(buf, sizeof(buf), "%s%d%%", humidityLabel, indoorHumidity);
-  label(64, buf);
-  tft.drawFastHLine(0, 80, W, TFT_DARKGREY);
+  label(b + 60, buf);
+  tft.drawFastHLine(0, b + sec - 6, gW, TFT_DARKGREY);
 
-  // Outdoor
-  label(90, outdoorLabel);
+  // Outdoor (section 1)
+  b = sec;
+  label(b + 6, outdoorLabel);
   snprintf(buf, sizeof(buf), "%.1f %s", outdoorTemp, tempUnit);
-  value(104, 4, buf);
+  value(b + 20, 4, buf);
   snprintf(buf, sizeof(buf), "%s%.*f %s", pressureLabel,
            (int)pressureDecimals, pressure, pressureUnit);
-  label(144, buf);
-  tft.drawFastHLine(0, 160, W, TFT_DARKGREY);
+  label(b + 60, buf);
+  tft.drawFastHLine(0, b + sec - 6, gW, TFT_DARKGREY);
 
-  // Rain
-  label(170, rainLabel);
+  // Rain (section 2)
+  b = 2 * sec;
+  label(b + 6, rainLabel);
   if (isRaining) {
-    tft.fillCircle(W - 18, 174, 6, TFT_CYAN);
+    tft.fillCircle(gW - 18, b + 10, 6, TFT_CYAN);
   }
   snprintf(buf, sizeof(buf), "1h:  %.*f %s", (int)rainDecimals, rain1h, rainUnit);
-  value(186, 2, buf);
+  value(b + 22, 2, buf);
   snprintf(buf, sizeof(buf), "24h: %.*f %s", (int)rainDecimals, rain24h, rainUnit);
-  value(212, 2, buf);
+  value(b + 48, 2, buf);
 }
 
 } // namespace TftUI
