@@ -13,9 +13,9 @@ Devices call `GET http://<pi>:8080/weather` and render the response. No tokens, 
 | `esp32c6_zero_ili9341` | Waveshare ESP32-C6-Zero | ESP32-C6 RISC-V, 160 MHz | 2.4″ ILI9341 240×320 SPI TFT (SCLK18/MOSI19/MISO20/DC4/CS5/RST3) | BOOT button (GPIO9) |
 | `esp32cam` | AI-Thinker ESP32-CAM | Xtensa LX6, 240 MHz | SSD1306 128×64 OLED (GPIO14/15) | BOOT button |
 | `esp32dev` | Generic ESP32 DevKit | Xtensa LX6, 240 MHz | SSD1306 128×64 OLED (GPIO21/22) | BOOT button |
-| `uno_r4_wifi` | Arduino Uno R4 WiFi | Renesas RA4M1, 48 MHz | SSD1306 128×64 OLED (A4/A5) | D7 button |
+| `uno_r4_wifi` | Arduino Uno R4 WiFi | Renesas RA4M1, 48 MHz | SSD1306 128×64 OLED (A4/A5) | D7 button, onboard 12×8 LED matrix (WiFi status) |
 
-OLED targets use U8g2 with three rotating cards. The ESP32-C6 target uses **Arduino_GFX + LVGL 8.4** with a card-based dashboard that automatically switches between landscape and portrait layouts based on the on-board accelerometer.
+OLED targets use U8g2 with three rotating cards. The `esp32c6_waveshare_lcd` target uses **Arduino_GFX + LVGL 8.4** with a card-based dashboard that auto-switches between landscape and portrait via the on-board accelerometer. The `esp32c6_zero_ili9341` target drives an external 2.4″ ILI9341 SPI TFT with **LovyanGFX** (TFT_eSPI doesn't build for the ESP32-C6) showing a full stacked portrait dashboard.
 
 ## Features
 
@@ -26,6 +26,7 @@ OLED targets use U8g2 with three rotating cards. The ESP32-C6 target uses **Ardu
 - **Automatic orientation** (C6 only) — accelerometer detects how the device is held and rebuilds the dashboard between landscape (320×172, side-by-side cards) and portrait (172×320, stacked cards)
 - **LVGL UI** (C6 only) — anti-aliased Montserrat fonts, themed colors, modal overlays for boot/connecting/locale/error
 - **Time-of-day dimming** (C6 Touch LCD only) — the hub computes a backlight level from the station's sunrise/sunset and sends it in `/weather`; the display fades between day and night brightness automatically
+- **WiFi-status smiley** (Uno R4 WiFi only) — the onboard 12×8 LED matrix shows a happy face when WiFi is connected, a sad face when it isn't; updates automatically as the link drops or recovers
 - **Device naming** — set `DEVICE_NAME` in `arduino_secrets.h`; sent as `X-Device-Name` HTTP header so the hub labels devices without server config
 - **Error hold** — display stays on the error screen until the hub reconnects; stale data never re-shown after a lost connection
 

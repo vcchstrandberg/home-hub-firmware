@@ -68,6 +68,32 @@ The C6-Zero exposes raw ESP32-C6 GPIOs on its 0.1″ headers — silkscreen labe
 
 ---
 
+## Waveshare ESP32-C6-Zero + 2.4″ ILI9341 SPI TFT
+
+The `esp32c6_zero_ili9341` target drives a generic red "2.4″ TFT SPI 240×320 V1.3" board (ILI9341 controller) over hardware SPI, rendered with LovyanGFX (TFT_eSPI does not compile for the ESP32-C6).
+
+| Display pin | C6-Zero pin | GPIO | Notes |
+|---|---|---|---|
+| VCC | 3V3 | — | 3.3 V only |
+| GND | GND | — | |
+| CS | 5 | GPIO5 | chip select |
+| RESET | 3 | GPIO3 | |
+| DC | 4 | GPIO4 | data/command |
+| SDI (MOSI) | 19 | GPIO19 | |
+| SCK | 18 | GPIO18 | |
+| LED | 3V3 | — | backlight |
+| SDO (MISO) | 20 | GPIO20 | |
+
+The on-board touch (XPT2046) and SD slot are left unconnected.
+
+**Orientation:** build flag `-DTFT_ROTATION` in `platformio.ini` (default `5` = portrait 240×320). This clone needs `rgb_order=true` + `invert=false` for correct colour and an all-rotation boot wipe to clear a GRAM-offset strip its flipped rotations leave behind. Landscape is not supported (the clone misreports per-rotation dimensions).
+
+**Locale button:** built-in **BOOT button (GPIO9)**.
+
+**Flashing:** USB-C; uses `huge_app.csv` partitions (LovyanGFX + WiFi + HTTPClient is large).
+
+---
+
 ## Arduino Uno R4 WiFi
 
 | OLED pin | Arduino pin | Notes |
@@ -84,6 +110,8 @@ D7 ──┤ button ├── GND
 ```
 
 The Uno R4's I2C is on the dedicated SDA/SCL pins (A4/A5 on the edge connector). Do not use the separate QWIIC/Stemma connector unless you remap the pins.
+
+**WiFi-status LED matrix:** no wiring needed — the firmware uses the board's onboard 12×8 red LED matrix to show a happy face when WiFi is connected and a sad face when it isn't.
 
 ---
 

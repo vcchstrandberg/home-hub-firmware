@@ -84,6 +84,32 @@ Three full-screen cards rotate every 5 seconds. Each card has a 16×16 Open Icon
 
 ---
 
+## TFT — 2.4″ ILI9341 240×320 (ESP32-C6-Zero)
+
+`esp32c6_zero_ili9341`, rendered with LovyanGFX. Single full-screen portrait dashboard — no card cycling — split into three equal-height stacked sections sized from the live panel height:
+
+```
+┌──────────────────────────────┐
+│ INNE                         │  cyan section label
+│ 23.4 C                       │  size-4 white value
+│ Fukt: 41%                    │
+│ ──────────────────────────── │
+│ OUTDOOR / city               │
+│ 8.2 C                        │
+│ Tryck: 1013 hPa              │
+│ ──────────────────────────── │
+│ REGN                      ●  │  ● = raining dot
+│ 1h:  2.4 mm                  │
+│ 24h: 8.1 mm                  │
+└──────────────────────────────┘
+```
+
+**Source:** `src/tft_ui.cpp` (`TftUI` namespace), `drawDashboard()`. Orientation is fixed at build time via `-DTFT_ROTATION` (default `5` = portrait); see [wiring.md](wiring.md) for the clone-specific colour/offset quirks.
+
+**Uno R4 WiFi LED matrix:** separate from the OLED, the onboard 12×8 matrix shows a happy/sad face for WiFi state (`FACE_HAPPY` / `FACE_SAD` in `src/main.cpp`). Authored bottom-up because row 0 maps to the bottom of the matrix.
+
+---
+
 ## TFT — Waveshare ESP32-C6 Touch LCD 1.47
 
 172×320 IPS panel driven by Arduino_GFX + LVGL 8.4. The dashboard rebuilds itself when the accelerometer detects a change between landscape (320×172) and portrait (172×320). Single full-screen view in either orientation — no card cycling.
