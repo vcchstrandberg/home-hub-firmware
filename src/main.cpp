@@ -523,13 +523,18 @@ void showError(const char* title, const char* detail)
 
 #ifdef WAVESHARE_ESP32C6_LCD
 
+// Barometric "high pressure" threshold in hPa. Compared against the raw
+// reading (not the display value) so it's the same cutoff in hPa or inHg.
+static const float HIGH_PRESSURE_HPA = 1020.0f;
+
 void drawCard(uint8_t)  // card argument unused — full dashboard always shown
 {
   LvglUI::setIndoor(g_loc->indoor, g_loc->humidity,
                     toDisplayTemp(g_indoorTemp), g_indoorHumidity, g_loc->temp_unit);
   LvglUI::setOutdoor(g_loc->outdoor, g_loc->pressure, g_loc->pressure_unit,
                      toDisplayTemp(g_outdoorTemp), toDisplayPressure(g_airPressure),
-                     g_loc->pressure_decimals, g_loc->temp_unit);
+                     g_loc->pressure_decimals, g_loc->temp_unit,
+                     g_airPressure >= HIGH_PRESSURE_HPA);
   LvglUI::setRain(g_loc->rain, g_loc->rain_unit, g_loc->rain_decimals,
                   toDisplayRain(g_rain1h), toDisplayRain(g_rain24h), g_isRaining);
 }

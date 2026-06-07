@@ -42,9 +42,10 @@ void showError(const char* title, const char* detail, const char* retrying);
 // Update individual dashboard regions; hides the modal as a side effect.
 void setIndoor(const char* label, const char* humidityLabel,
                float tempDisp, int humidity, const char* tempUnit);
+// highPressure shows a small sun icon on the outdoor card (barometric high).
 void setOutdoor(const char* label, const char* pressureLabel, const char* pressureUnit,
                 float tempDisp, float pressureDisp, uint8_t pressureDecimals,
-                const char* tempUnit);
+                const char* tempUnit, bool highPressure);
 void setRain(const char* label, const char* unit, uint8_t decimals,
              float rain1hDisp, float rain24hDisp, bool isRaining);
 

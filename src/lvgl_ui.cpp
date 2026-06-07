@@ -30,6 +30,7 @@ static const uint32_t COL_OUTDOOR_ACC = 0x4FC3F7;  // light blue
 static const uint32_t COL_MUTED       = 0x90A4AE;  // blue-gray
 static const uint32_t COL_DETAIL      = 0xCFD8DC;  // pale blue-gray
 static const uint32_t COL_ERROR_BG    = 0x611A15;  // dark red
+static const uint32_t COL_SUN         = 0xFFD54F;  // golden yellow (high-pressure sun)
 
 // ─── Display hardware ─────────────────────────────────────────────────────────
 static Arduino_DataBus* s_bus = nullptr;
@@ -184,6 +185,7 @@ struct {
   lv_obj_t* outdoor_temp;
   lv_obj_t* outdoor_unit;
   lv_obj_t* outdoor_pressure;
+  lv_obj_t* outdoor_sun;       // golden sun, shown only when pressure is high
 
   lv_obj_t* rain_row;
   lv_obj_t* rain_label;        // "REGN"
@@ -260,6 +262,54 @@ static lv_obj_t* createTempCard(lv_obj_t* parent, int x, int y, int w, int h,
   return card;
 }
 
+// Sun icon ray geometry, in the 24x24 local frame of the sun container
+// (center at 12,12). Eight rays pointing outward. Declared static so the
+// pointers handed to lv_line_set_points stay valid for the widget's lifetime.
+static const lv_point_t SUN_RAY_PTS[8][2] = {
+  {{12, 4},  {12, 0}},   // N
+  {{12, 20}, {12, 24}},  // S
+  {{20, 12}, {24, 12}},  // E
+  {{4, 12},  {0, 12}},   // W
+  {{17, 7},  {20, 4}},   // NE
+  {{7, 7},   {4, 4}},    // NW
+  {{17, 17}, {20, 20}},  // SE
+  {{7, 17},  {4, 20}},   // SW
+};
+
+// A small sun: golden filled disc surrounded by eight rays, drawn from LVGL
+// primitives because the Montserrat symbol font has no sun glyph. Returned
+// hidden; setOutdoor un-hides it when the pressure is high. The whole thing is
+// one container so the caller can align / show / hide it as a unit.
+static lv_obj_t* createSun(lv_obj_t* parent) {
+  lv_obj_t* sun = lv_obj_create(parent);
+  lv_obj_set_size(sun, 24, 24);
+  lv_obj_set_style_bg_opa(sun, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_border_width(sun, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(sun, 0, LV_PART_MAIN);
+  lv_obj_clear_flag(sun, LV_OBJ_FLAG_SCROLLABLE);
+
+  for (int i = 0; i < 8; i++) {
+    lv_obj_t* ray = lv_line_create(sun);
+    lv_line_set_points(ray, SUN_RAY_PTS[i], 2);
+    lv_obj_set_style_line_color(ray, lv_color_hex(COL_SUN), LV_PART_MAIN);
+    lv_obj_set_style_line_width(ray, 2, LV_PART_MAIN);
+    lv_obj_set_style_line_rounded(ray, true, LV_PART_MAIN);
+  }
+
+  lv_obj_t* disc = lv_obj_create(sun);
+  lv_obj_set_size(disc, 12, 12);
+  lv_obj_set_style_bg_color(disc, lv_color_hex(COL_SUN), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(disc, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_width(disc, 0, LV_PART_MAIN);
+  lv_obj_set_style_radius(disc, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(disc, 0, LV_PART_MAIN);
+  lv_obj_clear_flag(disc, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_center(disc);
+
+  lv_obj_add_flag(sun, LV_OBJ_FLAG_HIDDEN);
+  return sun;
+}
+
 // Modal overlay: full-screen, hidden by default. Used for splash, connecting,
 // locale-cycle hint, and error messages.
 static void createModal(lv_obj_t* parent, int w, int h) {
@@ -289,8 +339,10 @@ static void buildLandscape() {
 
   createTempCard(scr,  2, 2, 156, 102, COL_INDOOR_ACC,  "INNE",
                  &ui.indoor_name,  &ui.indoor_temp,  &ui.indoor_unit,  &ui.indoor_humidity);
-  createTempCard(scr, 162, 2, 156, 102, COL_OUTDOOR_ACC, "UTE",
+  lv_obj_t* outdoor = createTempCard(scr, 162, 2, 156, 102, COL_OUTDOOR_ACC, "UTE",
                  &ui.outdoor_name, &ui.outdoor_temp, &ui.outdoor_unit, &ui.outdoor_pressure);
+  ui.outdoor_sun = createSun(outdoor);
+  lv_obj_align(ui.outdoor_sun, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
 
   // Rain card: spans full width, card-styled to match indoor/outdoor.
   ui.rain_row = lv_obj_create(scr);
@@ -335,8 +387,10 @@ static void buildPortrait() {
 
   createTempCard(scr, 2, 2,   168, 102, COL_INDOOR_ACC,  "INNE",
                  &ui.indoor_name,  &ui.indoor_temp,  &ui.indoor_unit,  &ui.indoor_humidity);
-  createTempCard(scr, 2, 108, 168, 102, COL_OUTDOOR_ACC, "UTE",
+  lv_obj_t* outdoor = createTempCard(scr, 2, 108, 168, 102, COL_OUTDOOR_ACC, "UTE",
                  &ui.outdoor_name, &ui.outdoor_temp, &ui.outdoor_unit, &ui.outdoor_pressure);
+  ui.outdoor_sun = createSun(outdoor);
+  lv_obj_align(ui.outdoor_sun, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
 
   // Rain card: full width, card-styled. Three lines (small REGN header,
   // then 1h and 24h values stacked at 24pt).
@@ -533,7 +587,7 @@ void LvglUI::setIndoor(const char* label, const char* humidityLabel,
 
 void LvglUI::setOutdoor(const char* label, const char* pressureLabel, const char* pressureUnit,
                         float tempDisp, float pressureDisp, uint8_t pressureDecimals,
-                        const char* tempUnit) {
+                        const char* tempUnit, bool highPressure) {
   hideModal();
   lv_label_set_text(ui.outdoor_name, stripAccents(label).c_str());
   char tbuf[16];
@@ -545,6 +599,8 @@ void LvglUI::setOutdoor(const char* label, const char* pressureLabel, const char
   snprintf(pbuf, sizeof(pbuf), "%.*f", pressureDecimals, pressureDisp);
   String p = stripAccents(pressureLabel) + pbuf + (pressureUnit ? pressureUnit : "");
   lv_label_set_text(ui.outdoor_pressure, p.c_str());
+  if (highPressure) lv_obj_clear_flag(ui.outdoor_sun, LV_OBJ_FLAG_HIDDEN);
+  else              lv_obj_add_flag(ui.outdoor_sun, LV_OBJ_FLAG_HIDDEN);
 }
 
 void LvglUI::setRain(const char* label, const char* unit, uint8_t decimals,
