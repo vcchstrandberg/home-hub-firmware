@@ -87,6 +87,29 @@ static void centered(int y, int size, uint16_t color, const char* text) {
   tft.print(text);
 }
 
+// Small sun used as the high-pressure indicator: a filled golden disc ringed
+// by eight bold rays. Mirrors the LVGL sun on the Waveshare target, drawn here
+// with LovyanGFX. Rays use drawWideLine (anti-aliased, thick) so they read as
+// rays rather than stray pixels; the disc is filled last to cover their inner
+// ends cleanly. (cx,cy) is the disc center, r its radius.
+static void drawSun(int cx, int cy, int r) {
+  const uint16_t col = tft.color565(0xFF, 0xC1, 0x07);  // amber gold
+  const float w = 2.5f;   // ray thickness
+  const int in  = r + 3;  // ray inner start (just outside the disc)
+  const int out = r + 8;  // ray outer tip
+  const int di  = (in  * 7) / 10;  // diagonal component ~ 1/sqrt(2)
+  const int doo = (out * 7) / 10;
+  tft.drawWideLine(cx, cy - in, cx, cy - out, w, col);   // N
+  tft.drawWideLine(cx, cy + in, cx, cy + out, w, col);   // S
+  tft.drawWideLine(cx - in, cy, cx - out, cy, w, col);   // W
+  tft.drawWideLine(cx + in, cy, cx + out, cy, w, col);   // E
+  tft.drawWideLine(cx + di, cy - di, cx + doo, cy - doo, w, col);  // NE
+  tft.drawWideLine(cx - di, cy - di, cx - doo, cy - doo, w, col);  // NW
+  tft.drawWideLine(cx + di, cy + di, cx + doo, cy + doo, w, col);  // SE
+  tft.drawWideLine(cx - di, cy + di, cx - doo, cy + doo, w, col);  // SW
+  tft.fillCircle(cx, cy, r, col);
+}
+
 namespace TftUI {
 
 void init() {
@@ -140,7 +163,7 @@ void drawDashboard(const char* indoorLabel, const char* humidityLabel,
                    float indoorTemp, int indoorHumidity, const char* tempUnit,
                    const char* outdoorLabel, const char* pressureLabel,
                    const char* pressureUnit, float outdoorTemp, float pressure,
-                   uint8_t pressureDecimals,
+                   uint8_t pressureDecimals, bool highPressure,
                    const char* rainLabel, const char* rainUnit,
                    uint8_t rainDecimals, float rain1h, float rain24h,
                    bool isRaining) {
@@ -169,6 +192,14 @@ void drawDashboard(const char* indoorLabel, const char* humidityLabel,
   label(b + 6, outdoorLabel);
   snprintf(buf, sizeof(buf), "%.1f %s", outdoorTemp, tempUnit);
   value(b + 20, 4, buf);
+  // High-pressure sun, in the open space to the right of the temperature/unit
+  // (same 1020 hPa cutoff as the Waveshare target). Anchored to the measured
+  // temperature width so it always clears the "C"/"F" glyph.
+  if (highPressure) {
+    tft.setTextSize(4);
+    int sx = 6 + tft.textWidth(buf) + 24;
+    drawSun(sx, b + 36, 8);
+  }
   snprintf(buf, sizeof(buf), "%s%.*f %s", pressureLabel,
            (int)pressureDecimals, pressure, pressureUnit);
   label(b + 60, buf);

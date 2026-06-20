@@ -26,7 +26,7 @@ OLED targets use U8g2 with three rotating cards. The `esp32c6_waveshare_lcd` tar
 - **Automatic orientation** (C6 only) — accelerometer detects how the device is held and rebuilds the dashboard between landscape (320×172, side-by-side cards) and portrait (172×320, stacked cards)
 - **LVGL UI** (C6 only) — anti-aliased Montserrat fonts, themed colors, modal overlays for boot/connecting/locale/error
 - **Time-of-day dimming** (C6 Touch LCD only) — the hub computes a backlight level from the station's sunrise/sunset and sends it in `/weather`; the display fades between day and night brightness automatically
-- **High-pressure sun** (C6 Touch LCD only) — a golden sun appears on the outdoor card when the barometric pressure is high (≥ 1020 hPa)
+- **High-pressure sun** (both C6 TFT targets) — a golden sun appears beside the outdoor reading when the barometric pressure is high (≥ 1020 hPa)
 - **WiFi-status smiley** (Uno R4 WiFi only) — the onboard 12×8 LED matrix shows a happy face when WiFi is connected, a sad face when it isn't; updates automatically as the link drops or recovers
 - **Device naming** — set `DEVICE_NAME` in `arduino_secrets.h`; sent as `X-Device-Name` HTTP header so the hub labels devices without server config
 - **Error hold** — display stays on the error screen until the hub reconnects; stale data never re-shown after a lost connection

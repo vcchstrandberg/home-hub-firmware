@@ -521,11 +521,14 @@ void showError(const char* title, const char* detail)
 // OLED boards: Card 0 = indoor, Card 1 = outdoor, Card 2 = rain (cycled)
 // C6 TFT:      Full dashboard always — all data on screen simultaneously
 
-#ifdef WAVESHARE_ESP32C6_LCD
-
 // Barometric "high pressure" threshold in hPa. Compared against the raw
 // reading (not the display value) so it's the same cutoff in hPa or inHg.
+// Shared by the two full-dashboard TFT targets (Waveshare LCD + ILI9341).
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(ESP32C6_ZERO_TFT)
 static const float HIGH_PRESSURE_HPA = 1020.0f;
+#endif
+
+#ifdef WAVESHARE_ESP32C6_LCD
 
 void drawCard(uint8_t)  // card argument unused — full dashboard always shown
 {
@@ -549,7 +552,7 @@ void drawCard(uint8_t)  // card argument unused — full dashboard always shown
       g_city.length() > 0 ? g_city.c_str() : g_loc->outdoor,
       g_loc->pressure, g_loc->pressure_unit,
       toDisplayTemp(g_outdoorTemp), toDisplayPressure(g_airPressure),
-      g_loc->pressure_decimals,
+      g_loc->pressure_decimals, g_airPressure >= HIGH_PRESSURE_HPA,
       g_loc->rain, g_loc->rain_unit, g_loc->rain_decimals,
       toDisplayRain(g_rain1h), toDisplayRain(g_rain24h), g_isRaining);
 }

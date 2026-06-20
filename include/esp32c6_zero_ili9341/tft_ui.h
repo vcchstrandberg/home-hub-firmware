@@ -22,11 +22,12 @@ void showError(const char* title, const char* detail, const char* retrying);
 // Full weather dashboard — redraws the whole screen with current values.
 // `outdoorLabel` is already resolved by the caller (city name when known,
 // otherwise the locale's "OUTDOOR" string).
+// `highPressure` shows a small sun beside the outdoor temperature (barometric high).
 void drawDashboard(const char* indoorLabel, const char* humidityLabel,
                    float indoorTemp, int indoorHumidity, const char* tempUnit,
                    const char* outdoorLabel, const char* pressureLabel,
                    const char* pressureUnit, float outdoorTemp, float pressure,
-                   uint8_t pressureDecimals,
+                   uint8_t pressureDecimals, bool highPressure,
                    const char* rainLabel, const char* rainUnit,
                    uint8_t rainDecimals, float rain1h, float rain24h,
                    bool isRaining);
