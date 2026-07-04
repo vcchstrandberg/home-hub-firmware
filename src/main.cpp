@@ -66,6 +66,8 @@ struct Locale {
   const char* check_creds;
   const char* retrying;
   const char* hub_unreachable;
+  const char* tomorrow;         // forecast page title
+  const char* forecast_na;      // shown when the hub has no forecast yet
 };
 
 static const Locale L_SV_SE = {
@@ -75,7 +77,8 @@ static const Locale L_SV_SE = {
   "C",          "hPa",        "mm",
   0, 1, false, false, false,
   "Ansluter WiFi:", "WiFi fel",     "Kontrollera",
-  "Forsoker...",    "Hub oatkomlig"
+  "Forsoker...",    "Hub oatkomlig",
+  "IMORGON",        "Ingen prognos"
 };
 static const Locale L_EN_US = {
   "English US", "en-US",
@@ -84,7 +87,8 @@ static const Locale L_EN_US = {
   "F",          "inHg",       "in",
   2, 2, true, true, true,
   "Connecting to WiFi:", "WiFi failed",  "Check credentials",
-  "Retrying...",         "Hub unreachable"
+  "Retrying...",         "Hub unreachable",
+  "TOMORROW",            "No forecast"
 };
 static const Locale L_EN_GB = {
   "English UK", "en-GB",
@@ -93,7 +97,8 @@ static const Locale L_EN_GB = {
   "C",          "hPa",        "mm",
   0, 1, false, false, false,
   "Connecting to WiFi:", "WiFi failed",  "Check credentials",
-  "Retrying...",         "Hub unreachable"
+  "Retrying...",         "Hub unreachable",
+  "TOMORROW",            "No forecast"
 };
 static const Locale L_FR_FR = {
   "Francais",   "fr-FR",
@@ -102,7 +107,8 @@ static const Locale L_FR_FR = {
   "C",          "hPa",        "mm",
   0, 1, false, false, false,
   "Connexion WiFi:", "WiFi echoue",   "Ver. identifiants",
-  "Reessai...",      "Hub inaccessible"
+  "Reessai...",      "Hub inaccessible",
+  "DEMAIN",          "Pas de prevision"
 };
 
 static const Locale* const locales[] = { &L_SV_SE, &L_EN_US, &L_EN_GB, &L_FR_FR };
@@ -181,6 +187,17 @@ bool   g_isRaining      = false;
 bool   g_hasData        = false;
 String g_city           = "";
 
+// Next-day forecast (from the hub's nested "forecast" object). g_fcHasData is
+// false on older hubs or before the first met.no fetch succeeds.
+bool   g_fcHasData      = false;
+float  g_fcTempMax      = 0;
+float  g_fcTempMin      = 0;
+float  g_fcPrecip       = 0;   // mm
+String g_fcSymbol       = "";  // raw met.no symbol_code
+#ifdef WAVESHARE_ESP32C6_LCD
+uint8_t g_page          = 0;   // 0 = dashboard, 1 = forecast
+#endif
+
 // ── Timing ────────────────────────────────────────────────────────────────────
 uint8_t       g_card           = 0;
 unsigned long g_lastCardSwitch = 0;
@@ -206,6 +223,10 @@ void drawCard(uint8_t card);
 void showError(const char* title, const char* detail = nullptr);
 void showLocale();
 void cycleLocale();
+#ifdef WAVESHARE_ESP32C6_LCD
+void renderForecast();
+void nextPage();
+#endif
 
 // ── setup() ───────────────────────────────────────────────────────────────────
 void setup()
@@ -224,7 +245,9 @@ void setup()
 
 #ifdef WAVESHARE_ESP32C6_LCD
   LvglUI::init();
-  LvglUI::setOnTap(cycleLocale);
+  // Short tap flips dashboard <-> forecast; long-press cycles the locale.
+  LvglUI::setOnTap(nextPage);
+  LvglUI::setOnLongPress(cycleLocale);
   // Wire is already begun by LvglUI::init() for the touch controller — the
   // QMI8658 shares that I2C bus, so we can init it here without a second
   // Wire.begin().
@@ -342,6 +365,9 @@ void cycleLocale()
   Serial.print("Locale: "); Serial.println(g_loc->code);
   showLocale();
   if (g_hasData) drawCard(g_card);
+#ifdef WAVESHARE_ESP32C6_LCD
+  renderForecast();  // re-localize the forecast page too
+#endif
 }
 
 // ── loop() ────────────────────────────────────────────────────────────────────
@@ -378,6 +404,10 @@ void loop()
       Serial.println(rot);
       LvglUI::setOrientation((uint8_t)rot);
       if (g_hasData) drawCard(g_card);
+      // The rebuild recreated both pages fresh — repopulate the forecast and
+      // restore whichever page was showing before the flip.
+      renderForecast();
+      LvglUI::showPage(g_page);
     }
   }
 #endif
@@ -481,6 +511,20 @@ void parseWeather(const String& json)
   g_hasData        = true;
   g_lastCardSwitch = millis();  // restart card timer so display shows full CARD_MS before switching
 
+  // Nested forecast object — absent on older hubs / before the first met.no
+  // fetch, in which case g_fcHasData stays false and the page shows "no forecast".
+  JsonObjectConst fc = doc["forecast"];
+  if (!fc.isNull()) {
+    g_fcHasData = true;
+    g_fcTempMax = fc["temp_max"]  | 0.0f;
+    g_fcTempMin = fc["temp_min"]  | 0.0f;
+    g_fcPrecip  = fc["precip_mm"] | 0.0f;
+    const char* sym = fc["symbol_code"];
+    g_fcSymbol  = sym ? String(sym) : String("");
+  } else {
+    g_fcHasData = false;
+  }
+
 #ifdef WAVESHARE_ESP32C6_LCD
   // Hub-computed time-of-day backlight level (0-100). Absent on older hubs —
   // leave brightness untouched in that case.
@@ -494,6 +538,9 @@ void parseWeather(const String& json)
   Serial.print("City: "); Serial.println(g_city);
   Serial.print("In: ");   Serial.print(g_indoorTemp);  Serial.print("  Out: "); Serial.println(g_outdoorTemp);
   drawCard(g_card);
+#ifdef WAVESHARE_ESP32C6_LCD
+  renderForecast();
+#endif
 }
 
 // ── showError() ───────────────────────────────────────────────────────────────
@@ -540,6 +587,22 @@ void drawCard(uint8_t)  // card argument unused — full dashboard always shown
                      g_airPressure >= HIGH_PRESSURE_HPA);
   LvglUI::setRain(g_loc->rain, g_loc->rain_unit, g_loc->rain_decimals,
                   toDisplayRain(g_rain1h), toDisplayRain(g_rain24h), g_isRaining);
+}
+
+// Push current forecast globals to the forecast page (localized + unit-converted).
+void renderForecast()
+{
+  LvglUI::setForecast(g_loc->tomorrow, g_fcSymbol.c_str(), g_fcHasData,
+                      toDisplayTemp(g_fcTempMax), toDisplayTemp(g_fcTempMin), g_loc->temp_unit,
+                      g_loc->rain, toDisplayRain(g_fcPrecip), g_loc->rain_decimals,
+                      g_loc->rain_unit, g_loc->forecast_na);
+}
+
+// Short-tap handler: flip between the dashboard and forecast pages.
+void nextPage()
+{
+  g_page ^= 1;
+  LvglUI::showPage(g_page);
 }
 
 #elif defined(ESP32C6_ZERO_TFT)

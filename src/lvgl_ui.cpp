@@ -31,6 +31,7 @@ static const uint32_t COL_MUTED       = 0x90A4AE;  // blue-gray
 static const uint32_t COL_DETAIL      = 0xCFD8DC;  // pale blue-gray
 static const uint32_t COL_ERROR_BG    = 0x611A15;  // dark red
 static const uint32_t COL_SUN         = 0xFFD54F;  // golden yellow (high-pressure sun)
+static const uint32_t COL_CLOUD       = 0xB0BEC5;  // light grey (forecast cloud icon)
 
 // ─── Display hardware ─────────────────────────────────────────────────────────
 static Arduino_DataBus* s_bus = nullptr;
@@ -110,9 +111,16 @@ static lv_indev_drv_t     s_indev_drv;
 // (showLocale does this) — invoking it directly here would recurse. So we
 // just set a flag in the indev cb and dispatch from tick() after timer_handler
 // returns, guarded against re-entry.
-static void (*s_onTap)() = nullptr;
+static void (*s_onTap)()       = nullptr;
+static void (*s_onLongPress)() = nullptr;
 static bool          s_wasPressed = false;
 static volatile bool s_tapPending = false;
+// Long-press: record when a press begins; tick() fires s_onLongPress once the
+// hold passes the threshold, then s_longFired swallows the release so it isn't
+// also counted as a tap.
+static const uint32_t   LONGPRESS_MS = 600;
+static volatile uint32_t s_pressStart = 0;
+static volatile bool     s_longFired  = false;
 
 static void touchpad_read_cb(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
   touch_data_t td;
@@ -127,7 +135,13 @@ static void touchpad_read_cb(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
     data->state   = LV_INDEV_STATE_RELEASED;
   }
 
-  if (s_wasPressed && !nowPressed) s_tapPending = true;
+  if (!s_wasPressed && nowPressed) {          // press begins
+    s_pressStart = millis();
+    s_longFired  = false;
+  }
+  if (s_wasPressed && !nowPressed) {          // release
+    if (!s_longFired) s_tapPending = true;    // long-press already handled its own event
+  }
   s_wasPressed = nowPressed;
 }
 
@@ -173,6 +187,20 @@ static String stripAccents(const char* src) {
 
 // ─── Widget pointers ──────────────────────────────────────────────────────────
 struct {
+  // Pages (full-screen containers; one visible at a time) + indicator dots.
+  lv_obj_t* page_dash;
+  lv_obj_t* page_fc;
+  lv_obj_t* dots[2];
+
+  // Forecast page
+  lv_obj_t* fc_title;          // "TOMORROW"
+  lv_obj_t* fc_icon;           // container the weather icon is drawn into
+  lv_obj_t* fc_hi;             // big high temp (amber)
+  lv_obj_t* fc_sep;            // "/"
+  lv_obj_t* fc_lo;             // big low temp (blue)
+  lv_obj_t* fc_unit;           // "C" / "F"
+  lv_obj_t* fc_precip;         // "REGN: 0.4 mm"
+
   // Dashboard
   lv_obj_t* indoor_card;
   lv_obj_t* indoor_name;       // "INNE"
@@ -310,6 +338,228 @@ static lv_obj_t* createSun(lv_obj_t* parent) {
   return sun;
 }
 
+// ─── Forecast weather icon ────────────────────────────────────────────────────
+// Icons are drawn from LVGL primitives inside a 56x56 container. Line-based
+// shapes need their point arrays to outlive the call, so the fixed geometry
+// lives in file-scope static const arrays (as with the sun rays above).
+enum FcIcon { FC_SUN, FC_PARTLY, FC_CLOUD, FC_RAIN, FC_SNOW, FC_THUNDER, FC_FOG, FC_UNKNOWN };
+
+static const lv_point_t FC_SUN_RAYS[8][2] = {
+  {{28, 6},  {28, 0}},   {{28, 50}, {28, 56}},
+  {{50, 28}, {56, 28}},  {{6, 28},  {0, 28}},
+  {{43, 13}, {47, 9}},   {{13, 13}, {9, 9}},
+  {{43, 43}, {47, 47}},  {{13, 43}, {9, 47}},
+};
+static const lv_point_t FC_RAIN_STREAKS[3][2] = {
+  {{18, 42}, {15, 52}}, {{28, 42}, {25, 52}}, {{38, 42}, {35, 52}},
+};
+static const lv_point_t FC_BOLT[4] = { {30, 40}, {24, 49}, {29, 49}, {23, 56} };
+static const lv_point_t FC_FOG_LINES[4][2] = {
+  {{10, 16}, {46, 16}}, {{8, 26}, {48, 26}},
+  {{12, 36}, {44, 36}}, {{10, 46}, {46, 46}},
+};
+
+static void iconCircle(lv_obj_t* p, int d, int x, int y, uint32_t color) {
+  lv_obj_t* c = lv_obj_create(p);
+  lv_obj_set_size(c, d, d);
+  lv_obj_set_pos(c, x, y);
+  lv_obj_set_style_bg_color(c, lv_color_hex(color), 0);
+  lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(c, 0, 0);
+  lv_obj_set_style_radius(c, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_pad_all(c, 0, 0);
+  lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+}
+
+static void iconRect(lv_obj_t* p, int w, int h, int x, int y, int r, uint32_t color) {
+  lv_obj_t* b = lv_obj_create(p);
+  lv_obj_set_size(b, w, h);
+  lv_obj_set_pos(b, x, y);
+  lv_obj_set_style_bg_color(b, lv_color_hex(color), 0);
+  lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(b, 0, 0);
+  lv_obj_set_style_radius(b, r, 0);
+  lv_obj_set_style_pad_all(b, 0, 0);
+  lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+}
+
+static void iconLine(lv_obj_t* p, const lv_point_t* pts, uint16_t n, uint32_t color) {
+  lv_obj_t* ln = lv_line_create(p);
+  lv_line_set_points(ln, pts, n);
+  lv_obj_set_style_line_color(ln, lv_color_hex(color), 0);
+  lv_obj_set_style_line_width(ln, 3, 0);
+  lv_obj_set_style_line_rounded(ln, true, 0);
+}
+
+// A grey cloud: a wide rounded body with two puffs on top.
+static void iconCloud(lv_obj_t* p, uint32_t color) {
+  iconRect(p, 40, 18, 8, 24, 9, color);
+  iconCircle(p, 20, 8, 18, color);
+  iconCircle(p, 26, 24, 10, color);
+}
+
+// (Re)draw the mapped weather icon into the given 56x56 container.
+static void buildIcon(lv_obj_t* cont, FcIcon icon) {
+  lv_obj_clean(cont);
+  switch (icon) {
+    case FC_SUN:
+      for (int i = 0; i < 8; i++) iconLine(cont, FC_SUN_RAYS[i], 2, COL_SUN);
+      iconCircle(cont, 24, 16, 16, COL_SUN);
+      break;
+    case FC_PARTLY:
+      iconCircle(cont, 18, 4, 4, COL_SUN);
+      iconCloud(cont, COL_CLOUD);
+      break;
+    case FC_CLOUD:
+      iconCloud(cont, COL_CLOUD);
+      break;
+    case FC_RAIN:
+      iconCloud(cont, COL_CLOUD);
+      for (int i = 0; i < 3; i++) iconLine(cont, FC_RAIN_STREAKS[i], 2, COL_OUTDOOR_ACC);
+      break;
+    case FC_SNOW:
+      iconCloud(cont, COL_CLOUD);
+      iconCircle(cont, 6, 15, 46, 0xFFFFFF);
+      iconCircle(cont, 6, 25, 46, 0xFFFFFF);
+      iconCircle(cont, 6, 35, 46, 0xFFFFFF);
+      break;
+    case FC_THUNDER:
+      iconCloud(cont, COL_CLOUD);
+      iconLine(cont, FC_BOLT, 4, COL_SUN);
+      break;
+    case FC_FOG:
+      for (int i = 0; i < 4; i++) iconLine(cont, FC_FOG_LINES[i], 2, COL_CLOUD);
+      break;
+    default:  // FC_UNKNOWN — a muted cloud placeholder
+      iconCloud(cont, COL_MUTED);
+      break;
+  }
+}
+
+// Map a met.no symbol_code (day/night suffix tolerated) to an icon category.
+// Mirrors the server's _symbol_emoji categories. Order matters: "rainandthunder"
+// contains "rain", so thunder is checked first.
+static FcIcon iconForSymbol(const char* code) {
+  if (!code || !*code) return FC_UNKNOWN;
+  String s(code);
+  int u = s.lastIndexOf('_');
+  if (u > 0) {
+    String suf = s.substring(u + 1);
+    if (suf == "day" || suf == "night" || suf == "polartwilight") s = s.substring(0, u);
+  }
+  if (s.indexOf("thunder") >= 0) return FC_THUNDER;
+  if (s.indexOf("sleet")   >= 0) return FC_RAIN;   // sleet rendered as rain
+  if (s.indexOf("snow")    >= 0) return FC_SNOW;
+  if (s.indexOf("rain")    >= 0) return FC_RAIN;
+  if (s == "fog")                return FC_FOG;
+  if (s == "clearsky")           return FC_SUN;
+  if (s == "fair")               return FC_SUN;
+  if (s == "partlycloudy")       return FC_PARTLY;
+  if (s == "cloudy")             return FC_CLOUD;
+  return FC_UNKNOWN;
+}
+
+// ─── Page management ──────────────────────────────────────────────────────────
+static uint8_t s_page = 0;  // 0 = dashboard, 1 = forecast
+
+// Build the forecast page contents into a full-screen page container. Uses a
+// centered flex column so the same builder works in both orientations.
+static void buildForecastPage(lv_obj_t* pg) {
+  lv_obj_set_flex_flow(pg, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(pg, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_row(pg, 10, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(pg, 10, LV_PART_MAIN);
+
+  ui.fc_title = lv_label_create(pg);
+  lv_label_set_text(ui.fc_title, "TOMORROW");
+  lv_obj_set_style_text_color(ui.fc_title, lv_color_hex(COL_MUTED), 0);
+  lv_obj_set_style_text_font(ui.fc_title, &lv_font_montserrat_14, 0);
+
+  ui.fc_icon = lv_obj_create(pg);
+  lv_obj_set_size(ui.fc_icon, 56, 56);
+  lv_obj_set_style_bg_opa(ui.fc_icon, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_border_width(ui.fc_icon, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(ui.fc_icon, 0, LV_PART_MAIN);
+  lv_obj_clear_flag(ui.fc_icon, LV_OBJ_FLAG_SCROLLABLE);
+
+  // Temps row: hi (amber) / lo (blue) unit — separate labels so each is colored.
+  lv_obj_t* row = lv_obj_create(pg);
+  lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_border_width(row, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(row, 0, LV_PART_MAIN);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(row, 4, LV_PART_MAIN);
+  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+  ui.fc_hi = lv_label_create(row);
+  lv_label_set_text(ui.fc_hi, "--");
+  lv_obj_set_style_text_color(ui.fc_hi, lv_color_hex(COL_INDOOR_ACC), 0);
+  lv_obj_set_style_text_font(ui.fc_hi, &lv_font_montserrat_36, 0);
+
+  ui.fc_sep = lv_label_create(row);
+  lv_label_set_text(ui.fc_sep, "/");
+  lv_obj_set_style_text_color(ui.fc_sep, lv_color_hex(COL_MUTED), 0);
+  lv_obj_set_style_text_font(ui.fc_sep, &lv_font_montserrat_24, 0);
+
+  ui.fc_lo = lv_label_create(row);
+  lv_label_set_text(ui.fc_lo, "--");
+  lv_obj_set_style_text_color(ui.fc_lo, lv_color_hex(COL_OUTDOOR_ACC), 0);
+  lv_obj_set_style_text_font(ui.fc_lo, &lv_font_montserrat_36, 0);
+
+  ui.fc_unit = lv_label_create(row);
+  lv_label_set_text(ui.fc_unit, "");
+  lv_obj_set_style_text_color(ui.fc_unit, lv_color_hex(COL_MUTED), 0);
+  lv_obj_set_style_text_font(ui.fc_unit, &lv_font_montserrat_24, 0);
+
+  ui.fc_precip = lv_label_create(pg);
+  lv_label_set_text(ui.fc_precip, "--");
+  lv_obj_set_style_text_color(ui.fc_precip, lv_color_hex(COL_DETAIL), 0);
+  lv_obj_set_style_text_font(ui.fc_precip, &lv_font_montserrat_14, 0);
+}
+
+// Two page-indicator dots, bottom-center of the screen, drawn on top of the
+// pages. The active page's dot is white; the other is muted.
+static void buildDots(lv_obj_t* scr) {
+  for (int i = 0; i < 2; i++) {
+    ui.dots[i] = lv_obj_create(scr);
+    lv_obj_set_size(ui.dots[i], 8, 8);
+    lv_obj_set_style_bg_opa(ui.dots[i], LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(ui.dots[i], 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(ui.dots[i], LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(ui.dots[i], 0, LV_PART_MAIN);
+    lv_obj_clear_flag(ui.dots[i], LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align(ui.dots[i], LV_ALIGN_BOTTOM_MID, i == 0 ? -8 : 8, -4);
+  }
+}
+
+// Apply s_page: toggle page visibility and recolor the dots. Safe to call after
+// a rebuild to restore the previously-selected page.
+static void applyPage() {
+  if (!ui.page_dash || !ui.page_fc) return;
+  if (s_page == 0) {
+    lv_obj_clear_flag(ui.page_dash, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ui.page_fc, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(ui.page_dash, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(ui.page_fc, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (ui.dots[0]) lv_obj_set_style_bg_color(ui.dots[0],
+      lv_color_hex(s_page == 0 ? 0xFFFFFF : COL_MUTED), LV_PART_MAIN);
+  if (ui.dots[1]) lv_obj_set_style_bg_color(ui.dots[1],
+      lv_color_hex(s_page == 1 ? 0xFFFFFF : COL_MUTED), LV_PART_MAIN);
+}
+
+// Full-screen page container: solid background, no border/padding.
+static lv_obj_t* makePage(lv_obj_t* scr) {
+  lv_obj_t* pg = lv_obj_create(scr);
+  lv_obj_set_size(pg, lv_disp_get_hor_res(NULL), lv_disp_get_ver_res(NULL));
+  lv_obj_set_pos(pg, 0, 0);
+  styleContainer(pg, COL_BG, 0, 0, 0, 0);
+  return pg;
+}
+
 // Modal overlay: full-screen, hidden by default. Used for splash, connecting,
 // locale-cycle hint, and error messages.
 static void createModal(lv_obj_t* parent, int w, int h) {
@@ -336,16 +586,18 @@ static void createModal(lv_obj_t* parent, int w, int h) {
 static void buildLandscape() {
   resetScreen();
   lv_obj_t* scr = lv_scr_act();
+  ui.page_dash = makePage(scr);
+  lv_obj_t* dash = ui.page_dash;
 
-  createTempCard(scr,  2, 2, 156, 102, COL_INDOOR_ACC,  "INNE",
+  createTempCard(dash,  2, 2, 156, 102, COL_INDOOR_ACC,  "INNE",
                  &ui.indoor_name,  &ui.indoor_temp,  &ui.indoor_unit,  &ui.indoor_humidity);
-  lv_obj_t* outdoor = createTempCard(scr, 162, 2, 156, 102, COL_OUTDOOR_ACC, "UTE",
+  lv_obj_t* outdoor = createTempCard(dash, 162, 2, 156, 102, COL_OUTDOOR_ACC, "UTE",
                  &ui.outdoor_name, &ui.outdoor_temp, &ui.outdoor_unit, &ui.outdoor_pressure);
   ui.outdoor_sun = createSun(outdoor);
   lv_obj_align(ui.outdoor_sun, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
 
   // Rain card: spans full width, card-styled to match indoor/outdoor.
-  ui.rain_row = lv_obj_create(scr);
+  ui.rain_row = lv_obj_create(dash);
   lv_obj_set_size(ui.rain_row, 316, 60);
   lv_obj_set_pos(ui.rain_row, 2, 108);
   styleContainer(ui.rain_row, COL_CARD_BG, COL_RAIN_BG, 1, 5, 6);
@@ -375,7 +627,12 @@ static void buildLandscape() {
   lv_obj_set_style_text_font(ui.rain_24h, &lv_font_montserrat_24, 0);
   lv_obj_align(ui.rain_24h, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
 
+  ui.page_fc = makePage(scr);
+  buildForecastPage(ui.page_fc);
+
+  buildDots(scr);
   createModal(scr, 320, 172);
+  applyPage();
 }
 
 // ─── Portrait layout (172 x 320) ──────────────────────────────────────────────
@@ -384,17 +641,19 @@ static void buildLandscape() {
 static void buildPortrait() {
   resetScreen();
   lv_obj_t* scr = lv_scr_act();
+  ui.page_dash = makePage(scr);
+  lv_obj_t* dash = ui.page_dash;
 
-  createTempCard(scr, 2, 2,   168, 102, COL_INDOOR_ACC,  "INNE",
+  createTempCard(dash, 2, 2,   168, 102, COL_INDOOR_ACC,  "INNE",
                  &ui.indoor_name,  &ui.indoor_temp,  &ui.indoor_unit,  &ui.indoor_humidity);
-  lv_obj_t* outdoor = createTempCard(scr, 2, 108, 168, 102, COL_OUTDOOR_ACC, "UTE",
+  lv_obj_t* outdoor = createTempCard(dash, 2, 108, 168, 102, COL_OUTDOOR_ACC, "UTE",
                  &ui.outdoor_name, &ui.outdoor_temp, &ui.outdoor_unit, &ui.outdoor_pressure);
   ui.outdoor_sun = createSun(outdoor);
   lv_obj_align(ui.outdoor_sun, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
 
   // Rain card: full width, card-styled. Three lines (small REGN header,
   // then 1h and 24h values stacked at 24pt).
-  ui.rain_row = lv_obj_create(scr);
+  ui.rain_row = lv_obj_create(dash);
   lv_obj_set_size(ui.rain_row, 168, 104);
   lv_obj_set_pos(ui.rain_row, 2, 214);
   styleContainer(ui.rain_row, COL_CARD_BG, COL_RAIN_BG, 1, 5, 6);
@@ -423,7 +682,12 @@ static void buildPortrait() {
   lv_obj_set_style_text_font(ui.rain_24h, &lv_font_montserrat_24, 0);
   lv_obj_align(ui.rain_24h, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
+  ui.page_fc = makePage(scr);
+  buildForecastPage(ui.page_fc);
+
+  buildDots(scr);
   createModal(scr, 172, 320);
+  applyPage();
 }
 
 // ─── Modal helpers ───────────────────────────────────────────────────────────
@@ -530,20 +794,39 @@ void LvglUI::setOrientation(uint8_t rotation) {
 void LvglUI::tick() {
   lv_timer_handler();
 
-  // Dispatch any pending tap from the previous timer handler pass.
-  // Re-entry guard: if the user callback itself calls tick() (e.g. via
-  // showLocale's busy wait), don't recursively dispatch another tap.
+  // Re-entry guard: a dispatched callback may itself pump tick() in a busy
+  // wait (e.g. showLocale). Skip dispatch on those nested passes — LVGL timers
+  // still ran above — so we don't recurse or fire a second event.
   static bool inDispatch = false;
-  if (s_tapPending && s_onTap && !inDispatch) {
-    s_tapPending = false;
+  if (inDispatch) return;
+
+  // Long-press fires while the finger is still down, once per hold.
+  if (s_wasPressed && !s_longFired && s_onLongPress &&
+      (millis() - s_pressStart) >= LONGPRESS_MS) {
+    s_longFired = true;
     inDispatch = true;
-    s_onTap();
+    s_onLongPress();
     inDispatch = false;
+    return;
+  }
+
+  // Otherwise dispatch a completed short tap.
+  if (s_tapPending) {
+    s_tapPending = false;
+    if (s_onTap) {
+      inDispatch = true;
+      s_onTap();
+      inDispatch = false;
+    }
   }
 }
 
 void LvglUI::setOnTap(void (*callback)()) {
   s_onTap = callback;
+}
+
+void LvglUI::setOnLongPress(void (*callback)()) {
+  s_onLongPress = callback;
 }
 
 void LvglUI::showBootSplash(const char* version, const char* date, const char* commit) {
@@ -614,6 +897,40 @@ void LvglUI::setRain(const char* label, const char* unit, uint8_t decimals,
   lv_label_set_text(ui.rain_24h, buf2);
   if (isRaining) lv_obj_clear_flag(ui.rain_droplet, LV_OBJ_FLAG_HIDDEN);
   else           lv_obj_add_flag(ui.rain_droplet, LV_OBJ_FLAG_HIDDEN);
+}
+
+void LvglUI::showPage(uint8_t page) {
+  s_page = (page > 1) ? 1 : page;
+  applyPage();
+}
+
+void LvglUI::setForecast(const char* title, const char* symbolCode, bool hasData,
+                         float tempMaxDisp, float tempMinDisp, const char* tempUnit,
+                         const char* rainLabel, float precipDisp, uint8_t rainDecimals,
+                         const char* rainUnit, const char* naText) {
+  if (!ui.fc_title) return;
+  lv_label_set_text(ui.fc_title, stripAccents(title).c_str());
+  buildIcon(ui.fc_icon, hasData ? iconForSymbol(symbolCode) : FC_UNKNOWN);
+
+  if (hasData) {
+    char hi[12], lo[12];
+    snprintf(hi, sizeof(hi), "%.0f", tempMaxDisp);
+    snprintf(lo, sizeof(lo), "%.0f", tempMinDisp);
+    lv_label_set_text(ui.fc_hi,   hi);
+    lv_label_set_text(ui.fc_sep,  "/");
+    lv_label_set_text(ui.fc_lo,   lo);
+    lv_label_set_text(ui.fc_unit, tempUnit ? tempUnit : "");
+    char pbuf[32];
+    snprintf(pbuf, sizeof(pbuf), "%.*f%s", rainDecimals, precipDisp, rainUnit ? rainUnit : "");
+    String p = stripAccents(rainLabel) + pbuf;
+    lv_label_set_text(ui.fc_precip, p.c_str());
+  } else {
+    lv_label_set_text(ui.fc_hi,   "--");
+    lv_label_set_text(ui.fc_sep,  "");
+    lv_label_set_text(ui.fc_lo,   "");
+    lv_label_set_text(ui.fc_unit, "");
+    lv_label_set_text(ui.fc_precip, stripAccents(naText).c_str());
+  }
 }
 
 #endif // WAVESHARE_ESP32C6_LCD

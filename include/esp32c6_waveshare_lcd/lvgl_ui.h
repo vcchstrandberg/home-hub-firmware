@@ -29,9 +29,18 @@ void tick();
 // The hub computes the level (time-of-day dimming) and sends it in /weather.
 void setBacklight(uint8_t percent);
 
-// Register a callback fired once per touch tap (press + release).
+// Register a callback fired once per short touch tap (press + quick release).
 // Pass nullptr to disable. Replaces any previously-registered callback.
 void setOnTap(void (*callback)());
+
+// Register a callback fired once when a press is held past the long-press
+// threshold (~600 ms). Fires while the finger is still down; the matching
+// release is then swallowed (no tap). Pass nullptr to disable.
+void setOnLongPress(void (*callback)());
+
+// Show dashboard page (0) or forecast page (1). Updates the page-indicator
+// dots. The two pages share the screen; only one is visible at a time.
+void showPage(uint8_t page);
 
 // Modal overlays (hide the dashboard while shown).
 void showBootSplash(const char* version, const char* date, const char* commit);
@@ -48,6 +57,15 @@ void setOutdoor(const char* label, const char* pressureLabel, const char* pressu
                 const char* tempUnit, bool highPressure);
 void setRain(const char* label, const char* unit, uint8_t decimals,
              float rain1hDisp, float rain24hDisp, bool isRaining);
+
+// Populate the forecast page. symbolCode is the raw met.no code (e.g.
+// "rainandthunder", "clearsky_day") — mapped internally to a drawn icon.
+// When hasData is false, the temps are blanked and naText is shown instead of
+// the precipitation line.
+void setForecast(const char* title, const char* symbolCode, bool hasData,
+                 float tempMaxDisp, float tempMinDisp, const char* tempUnit,
+                 const char* rainLabel, float precipDisp, uint8_t rainDecimals,
+                 const char* rainUnit, const char* naText);
 
 } // namespace LvglUI
 
