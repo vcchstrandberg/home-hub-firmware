@@ -202,6 +202,8 @@ String g_fcSymbol       = "";  // raw met.no symbol_code
 #ifdef WAVESHARE_ESP32C6_LCD
 static const uint8_t PAGE_COUNT = 3;  // dashboard, forecast, about
 uint8_t g_page          = 0;   // 0 = dashboard, 1 = forecast, 2 = about
+unsigned long g_lastSwipe = 0; // millis() of the last swipe (page change)
+const unsigned long PAGE_TIMEOUT_MS = 30000;  // auto-return to dashboard after this
 #endif
 #ifdef ABOUT_SCREEN
 bool          g_aboutMode  = false;  // long-press button shows the About screen
@@ -444,6 +446,13 @@ void loop()
       LvglUI::showPage(g_page);
     }
   }
+
+  // Auto-return to the dashboard after inactivity: if we're on the forecast or
+  // about page and there's been no swipe for a while, snap back to page 0.
+  if (g_page != 0 && now - g_lastSwipe >= PAGE_TIMEOUT_MS) {
+    g_page = 0;
+    LvglUI::showPage(0);
+  }
 #endif
 
   bool aboutShown = false;
@@ -655,6 +664,7 @@ void onSwipe(int dir)
 {
   if (dir < 0) g_page = (g_page + 1) % PAGE_COUNT;
   else         g_page = (uint8_t)((g_page + PAGE_COUNT - 1) % PAGE_COUNT);
+  g_lastSwipe = millis();
   LvglUI::showPage(g_page);
 }
 
