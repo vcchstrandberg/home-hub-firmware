@@ -30,6 +30,12 @@ void drawDashboard(const char* indoorLabel, const char* humidityLabel,
                    uint8_t pressureDecimals, bool highPressure,
                    const char* rainLabel, const char* rainUnit,
                    uint8_t rainDecimals, float rain1h, float rain24h,
-                   bool isRaining);
+                   bool isRaining,
+                   // Tomorrow's forecast. fcTempMax/Min and fcPrecip are already
+                   // unit-converted by the caller; fcSymbol is the raw met.no
+                   // symbol_code. When fcHasData is false, fcNa is shown instead.
+                   bool fcHasData, const char* fcTitle, const char* fcSymbol,
+                   float fcTempMax, float fcTempMin, float fcPrecip,
+                   const char* fcNa);
 
 } // namespace TftUI

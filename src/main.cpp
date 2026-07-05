@@ -414,7 +414,11 @@ void loop()
 
   if (g_hasData && now - g_lastCardSwitch >= CARD_MS) {
     g_lastCardSwitch = now;
-    g_card = (g_card + 1) % 3;
+    // Carousel is 3 cards (indoor/outdoor/rain) + a 4th forecast card when the
+    // hub is serving forecast data. (Full-dashboard TFT targets never cycle —
+    // their CARD_MS is effectively infinite.)
+    uint8_t cardCount = g_fcHasData ? 4 : 3;
+    g_card = (g_card + 1) % cardCount;
     drawCard(g_card);
   }
 
@@ -523,6 +527,7 @@ void parseWeather(const String& json)
     g_fcSymbol  = sym ? String(sym) : String("");
   } else {
     g_fcHasData = false;
+    if (g_card > 2) g_card = 0;  // don't leave the carousel parked on a now-gone forecast card
   }
 
 #ifdef WAVESHARE_ESP32C6_LCD
@@ -617,10 +622,33 @@ void drawCard(uint8_t)  // card argument unused — full dashboard always shown
       toDisplayTemp(g_outdoorTemp), toDisplayPressure(g_airPressure),
       g_loc->pressure_decimals, g_airPressure >= HIGH_PRESSURE_HPA,
       g_loc->rain, g_loc->rain_unit, g_loc->rain_decimals,
-      toDisplayRain(g_rain1h), toDisplayRain(g_rain24h), g_isRaining);
+      toDisplayRain(g_rain1h), toDisplayRain(g_rain24h), g_isRaining,
+      g_fcHasData, g_loc->tomorrow, g_fcSymbol.c_str(),
+      toDisplayTemp(g_fcTempMax), toDisplayTemp(g_fcTempMin),
+      toDisplayRain(g_fcPrecip), g_loc->forecast_na);
 }
 
 #elif !defined(NO_DISPLAY)
+
+// Map a met.no symbol_code to an open_iconic_weather_2x glyph. The font has a
+// small icon set, so several conditions collapse onto one glyph. Glyphs 64
+// (sun) and 67 (rain) are the same ones the outdoor/rain cards already use.
+uint8_t oledWeatherGlyph(const char* code)
+{
+  if (!code || !*code) return 66;  // cloud as a neutral fallback
+  String s(code);
+  int u = s.lastIndexOf('_');      // strip _day/_night/_polartwilight
+  if (u > 0) {
+    String suf = s.substring(u + 1);
+    if (suf == "day" || suf == "night" || suf == "polartwilight") s = s.substring(0, u);
+  }
+  if (s.indexOf("thunder") >= 0 || s.indexOf("rain") >= 0 ||
+      s.indexOf("sleet")   >= 0 || s.indexOf("snow") >= 0) return 67;  // rain-ish
+  if (s == "clearsky" || s == "fair")                      return 64;  // sun
+  if (s == "partlycloudy")                                 return 65;  // sun + cloud
+  return 66;                                                            // cloud / fog
+}
+
 void drawCard(uint8_t card)
 {
   oled.clearBuffer();
@@ -654,6 +682,19 @@ void drawCard(uint8_t card)
       oled.setFont(u8g2_font_logisoso16_tr);
       oled.drawStr(0, 38, ("1h:  " + String(toDisplayRain(g_rain1h),  (unsigned int)g_loc->rain_decimals) + g_loc->rain_unit).c_str());
       oled.drawStr(0, 58, ("24h: " + String(toDisplayRain(g_rain24h), (unsigned int)g_loc->rain_decimals) + g_loc->rain_unit).c_str());
+      break;
+    case 3:  // Tomorrow's forecast (only reached when g_fcHasData)
+      oled.setFont(u8g2_font_open_iconic_weather_2x_t);
+      oled.drawGlyph(0, 16, oledWeatherGlyph(g_fcSymbol.c_str()));
+      oled.setFont(u8g2_font_ncenB08_tr);
+      oled.drawStr(20, 12, g_loc->tomorrow);
+      oled.setFont(u8g2_font_logisoso16_tr);
+      oled.drawStr(0, 40, (String(toDisplayTemp(g_fcTempMax), 0) + " / " +
+                           String(toDisplayTemp(g_fcTempMin), 0) + g_loc->temp_unit).c_str());
+      oled.setFont(u8g2_font_ncenB08_tr);
+      oled.drawStr(0, 60, (String(g_loc->rain) + ": " +
+                           String(toDisplayRain(g_fcPrecip), (unsigned int)g_loc->rain_decimals) +
+                           g_loc->rain_unit).c_str());
       break;
   }
   oled.sendBuffer();

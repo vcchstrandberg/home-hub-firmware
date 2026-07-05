@@ -110,6 +110,82 @@ static void drawSun(int cx, int cy, int r) {
   tft.fillCircle(cx, cy, r, col);
 }
 
+// ─── Forecast weather icon ────────────────────────────────────────────────────
+// A small icon set drawn with LovyanGFX primitives, mirroring the Waveshare
+// LVGL icons and the OLED glyph mapping. Categories collapse the fuller met.no
+// symbol set the same way the other displays do.
+enum { WI_SUN, WI_PARTLY, WI_CLOUD, WI_RAIN, WI_SNOW, WI_THUNDER, WI_FOG, WI_UNKNOWN };
+
+static int fcCategory(const char* code) {
+  if (!code || !*code) return WI_UNKNOWN;
+  String s(code);
+  int u = s.lastIndexOf('_');            // strip _day/_night/_polartwilight
+  if (u > 0) {
+    String suf = s.substring(u + 1);
+    if (suf == "day" || suf == "night" || suf == "polartwilight") s = s.substring(0, u);
+  }
+  if (s.indexOf("thunder") >= 0) return WI_THUNDER;
+  if (s.indexOf("sleet")   >= 0) return WI_RAIN;   // sleet rendered as rain
+  if (s.indexOf("snow")    >= 0) return WI_SNOW;
+  if (s.indexOf("rain")    >= 0) return WI_RAIN;
+  if (s == "fog")                return WI_FOG;
+  if (s == "clearsky" || s == "fair") return WI_SUN;
+  if (s == "partlycloudy")       return WI_PARTLY;
+  if (s == "cloudy")             return WI_CLOUD;
+  return WI_UNKNOWN;
+}
+
+// A grey cloud centered near (cx,cy): two puffs on a rounded body. Kept
+// compact so it fits beside a single text line without touching neighbours.
+static void drawCloud(int cx, int cy, uint16_t col) {
+  tft.fillCircle(cx - 6, cy + 2, 6, col);
+  tft.fillCircle(cx + 5, cy,     9, col);
+  tft.fillRoundRect(cx - 12, cy + 2, 24, 8, 4, col);
+}
+
+// Draw a weather icon centered at (cx,cy), spanning roughly ±16 px. Compact by
+// design: it sits to the right of the forecast temps on one text line.
+static void drawWeatherIcon(int cx, int cy, int cat) {
+  const uint16_t grey  = tft.color565(0xB0, 0xBE, 0xC5);
+  const uint16_t blue  = tft.color565(0x4F, 0xC3, 0xF7);
+  const uint16_t amber = tft.color565(0xFF, 0xD5, 0x4F);
+  const uint16_t mute  = tft.color565(0x90, 0xA4, 0xAE);
+  switch (cat) {
+    case WI_SUN:
+      drawSun(cx, cy, 7);
+      break;
+    case WI_PARTLY:
+      drawSun(cx - 6, cy - 5, 5);
+      drawCloud(cx + 3, cy + 3, grey);
+      break;
+    case WI_CLOUD:
+      drawCloud(cx, cy, grey);
+      break;
+    case WI_RAIN:
+      drawCloud(cx, cy - 3, grey);
+      for (int i = 0; i < 3; i++)
+        tft.drawWideLine(cx - 8 + i * 8, cy + 9, cx - 10 + i * 8, cy + 16, 2, blue);
+      break;
+    case WI_SNOW:
+      drawCloud(cx, cy - 3, grey);
+      for (int i = 0; i < 3; i++) tft.fillCircle(cx - 8 + i * 8, cy + 12, 2, TFT_WHITE);
+      break;
+    case WI_THUNDER:
+      drawCloud(cx, cy - 3, grey);
+      tft.drawWideLine(cx + 2, cy + 8,  cx - 3, cy + 14, 2, amber);
+      tft.drawWideLine(cx - 3, cy + 14, cx + 2, cy + 14, 2, amber);
+      tft.drawWideLine(cx + 2, cy + 14, cx - 3, cy + 20, 2, amber);
+      break;
+    case WI_FOG:
+      for (int i = 0; i < 4; i++)
+        tft.drawWideLine(cx - 11, cy - 5 + i * 6, cx + 11, cy - 5 + i * 6, 2, grey);
+      break;
+    default:
+      drawCloud(cx, cy, mute);
+      break;
+  }
+}
+
 namespace TftUI {
 
 void init() {
@@ -166,7 +242,10 @@ void drawDashboard(const char* indoorLabel, const char* humidityLabel,
                    uint8_t pressureDecimals, bool highPressure,
                    const char* rainLabel, const char* rainUnit,
                    uint8_t rainDecimals, float rain1h, float rain24h,
-                   bool isRaining) {
+                   bool isRaining,
+                   bool fcHasData, const char* fcTitle, const char* fcSymbol,
+                   float fcTempMax, float fcTempMin, float fcPrecip,
+                   const char* fcNa) {
   tft.fillScreen(TFT_BLACK);
   char buf[32];
 
@@ -176,45 +255,74 @@ void drawDashboard(const char* indoorLabel, const char* humidityLabel,
   // Single stacked layout. Auto-switching to a wide layout by aspect ratio
   // proved unreliable on this clone (it misreports width/height for the
   // flipped rotations it needs), so this sticks to the one layout that works.
-  const int sec = gH / 3;
+  // Four equal sections now: indoor / outdoor / rain / tomorrow's forecast.
+  const int sec = gH / 4;
+  // Divider sits a few px above the section boundary, in the gap below the
+  // sub-label — never through text. Sub-labels are pulled up accordingly so the
+  // tighter 4-section layout stays clear.
+  const int divY = sec - 4;
 
   // Indoor (section 0)
   int b = 0;
-  label(b + 6, indoorLabel);
+  label(b + 4, indoorLabel);
   snprintf(buf, sizeof(buf), "%.1f %s", indoorTemp, tempUnit);
-  value(b + 20, 4, buf);
+  value(b + 16, 4, buf);
   snprintf(buf, sizeof(buf), "%s%d%%", humidityLabel, indoorHumidity);
-  label(b + 60, buf);
-  tft.drawFastHLine(0, b + sec - 6, gW, TFT_DARKGREY);
+  label(b + 52, buf);
+  tft.drawFastHLine(0, b + divY, gW, TFT_DARKGREY);
 
   // Outdoor (section 1)
   b = sec;
-  label(b + 6, outdoorLabel);
+  label(b + 4, outdoorLabel);
   snprintf(buf, sizeof(buf), "%.1f %s", outdoorTemp, tempUnit);
-  value(b + 20, 4, buf);
+  value(b + 16, 4, buf);
   // High-pressure sun, in the open space to the right of the temperature/unit
   // (same 1020 hPa cutoff as the Waveshare target). Anchored to the measured
   // temperature width so it always clears the "C"/"F" glyph.
   if (highPressure) {
     tft.setTextSize(4);
     int sx = 6 + tft.textWidth(buf) + 24;
-    drawSun(sx, b + 36, 8);
+    drawSun(sx, b + 30, 8);
   }
   snprintf(buf, sizeof(buf), "%s%.*f %s", pressureLabel,
            (int)pressureDecimals, pressure, pressureUnit);
-  label(b + 60, buf);
-  tft.drawFastHLine(0, b + sec - 6, gW, TFT_DARKGREY);
+  label(b + 52, buf);
+  tft.drawFastHLine(0, b + divY, gW, TFT_DARKGREY);
 
   // Rain (section 2)
   b = 2 * sec;
-  label(b + 6, rainLabel);
+  label(b + 4, rainLabel);
   if (isRaining) {
-    tft.fillCircle(gW - 18, b + 10, 6, TFT_CYAN);
+    tft.fillCircle(gW - 16, b + 8, 5, TFT_CYAN);
   }
   snprintf(buf, sizeof(buf), "1h:  %.*f %s", (int)rainDecimals, rain1h, rainUnit);
-  value(b + 22, 2, buf);
+  value(b + 16, 2, buf);
   snprintf(buf, sizeof(buf), "24h: %.*f %s", (int)rainDecimals, rain24h, rainUnit);
-  value(b + 48, 2, buf);
+  value(b + 38, 2, buf);
+  tft.drawFastHLine(0, b + divY, gW, TFT_DARKGREY);
+
+  // Forecast — tomorrow (section 3, last). Hi/Lo on the left, a compact weather
+  // icon centered on the right of that same line, precipitation below. Shows a
+  // placeholder when the hub has no forecast yet. No trailing divider.
+  b = 3 * sec;
+  label(b + 4, fcTitle);
+  if (fcHasData) {
+    snprintf(buf, sizeof(buf), "%.0f / %.0f %s", fcTempMax, fcTempMin, tempUnit);
+    value(b + 16, 3, buf);
+    // Place the icon by MEASURING the rendered temp width (this clone's font
+    // metrics/rotation are quirky, so a hard-coded x can't be trusted). If the
+    // temps leave room to their right, sit the icon there on the same line;
+    // otherwise tuck it into the bottom-right, clear of both text lines.
+    tft.setTextSize(3);
+    int tw  = tft.textWidth(buf);
+    int cat = fcCategory(fcSymbol);
+    if (6 + tw + 38 <= gW) drawWeatherIcon(6 + tw + 22, b + 24, cat);
+    else                   drawWeatherIcon(gW - 20, b + 58, cat);
+    snprintf(buf, sizeof(buf), "%s %.*f %s", rainLabel, (int)rainDecimals, fcPrecip, rainUnit);
+    label(b + 46, buf);
+  } else {
+    value(b + 22, 2, fcNa);
+  }
 }
 
 } // namespace TftUI
