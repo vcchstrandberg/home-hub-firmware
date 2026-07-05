@@ -42,6 +42,11 @@
 #  include "Arduino_LED_Matrix.h"   // onboard 12x8 LED matrix (UNO R4 WiFi)
 #  define BUTTON_PIN 7
 #  define HAS_LED_MATRIX 1
+#  define ABOUT_SCREEN 1            // long-press button → About screen with QR (Uno only)
+#endif
+
+#ifdef ABOUT_SCREEN
+#  include "qrcode.h"   // ricmoo/QRCode — QR generation for the About screen
 #endif
 
 // ── Locale ────────────────────────────────────────────────────────────────────
@@ -198,6 +203,12 @@ String g_fcSymbol       = "";  // raw met.no symbol_code
 static const uint8_t PAGE_COUNT = 3;  // dashboard, forecast, about
 uint8_t g_page          = 0;   // 0 = dashboard, 1 = forecast, 2 = about
 #endif
+#ifdef ABOUT_SCREEN
+bool          g_aboutMode  = false;  // long-press button shows the About screen
+unsigned long g_aboutStart = 0;      // millis() when the About screen was entered
+const unsigned long ABOUT_TIMEOUT_MS = 30000;  // auto-return to the carousel after this
+static const char* ABOUT_URL = "https://github.com/vcchstrandberg/home-hub-firmware";
+#endif
 
 // ── Timing ────────────────────────────────────────────────────────────────────
 uint8_t       g_card           = 0;
@@ -227,6 +238,10 @@ void cycleLocale();
 #ifdef WAVESHARE_ESP32C6_LCD
 void renderForecast();
 void onSwipe(int dir);
+#endif
+#ifdef ABOUT_SCREEN
+void drawAbout();
+void toggleAbout();
 #endif
 
 // ── setup() ───────────────────────────────────────────────────────────────────
@@ -367,6 +382,9 @@ void cycleLocale()
   g_loc = locales[g_localeIndex];
   Serial.print("Locale: "); Serial.println(g_loc->code);
   showLocale();
+#ifdef ABOUT_SCREEN
+  if (g_aboutMode) { drawAbout(); return; }  // stay on About; just restore it
+#endif
   if (g_hasData) drawCard(g_card);
 #ifdef WAVESHARE_ESP32C6_LCD
   renderForecast();  // re-localize the forecast page too
@@ -378,10 +396,23 @@ void loop()
 {
   unsigned long now = millis();
 
-  static unsigned long lastPress = 0;
-  if (digitalRead(BUTTON_PIN) == LOW && now - lastPress > 300) {
-    lastPress = now;
-    cycleLocale();
+  // Button. On the Uno a long press (>=600 ms) toggles the About screen and
+  // fires as soon as the threshold is reached (while still held) for a snappy
+  // feel; the release is then swallowed. A short press cycles the locale.
+  static bool          btnDown   = false;
+  static unsigned long btnStart  = 0;
+  static bool          btnLongFired = false;
+  bool btnPressed = (digitalRead(BUTTON_PIN) == LOW);
+  if (btnPressed && !btnDown) { btnDown = true; btnStart = now; btnLongFired = false; }
+#ifdef ABOUT_SCREEN
+  if (btnPressed && btnDown && !btnLongFired && now - btnStart >= 600) {
+    btnLongFired = true;
+    toggleAbout();
+  }
+#endif
+  if (!btnPressed && btnDown) {
+    btnDown = false;
+    if (!btnLongFired && now - btnStart >= 40) cycleLocale();
   }
 
 #ifdef HAS_LED_MATRIX
@@ -415,7 +446,17 @@ void loop()
   }
 #endif
 
-  if (g_hasData && now - g_lastCardSwitch >= CARD_MS) {
+  bool aboutShown = false;
+#ifdef ABOUT_SCREEN
+  // Auto-return to the carousel after a while if the button isn't pressed again.
+  if (g_aboutMode && now - g_aboutStart >= ABOUT_TIMEOUT_MS) {
+    g_aboutMode = false;
+    g_lastCardSwitch = now;
+    if (g_hasData) drawCard(g_card);
+  }
+  aboutShown = g_aboutMode;   // pause the carousel while the About screen is up
+#endif
+  if (g_hasData && !aboutShown && now - g_lastCardSwitch >= CARD_MS) {
     g_lastCardSwitch = now;
     // Carousel is 3 cards (indoor/outdoor/rain) + a 4th forecast card when the
     // hub is serving forecast data. (Full-dashboard TFT targets never cycle —
@@ -545,6 +586,9 @@ void parseWeather(const String& json)
 
   Serial.print("City: "); Serial.println(g_city);
   Serial.print("In: ");   Serial.print(g_indoorTemp);  Serial.print("  Out: "); Serial.println(g_outdoorTemp);
+#ifdef ABOUT_SCREEN
+  if (g_aboutMode) return;  // data is updated, but don't paint over the About screen
+#endif
   drawCard(g_card);
 #ifdef WAVESHARE_ESP32C6_LCD
   renderForecast();
@@ -705,4 +749,42 @@ void drawCard(uint8_t card)
 }
 #else
 void drawCard(uint8_t) {}
+#endif
+
+#ifdef ABOUT_SCREEN
+// About screen (Uno): QR code to the repo on the left, version text on the
+// right. The URL fits QR version 3 (29 modules) at ECC low; 2 px/module = 58 px.
+void drawAbout()
+{
+  oled.clearBuffer();
+
+  QRCode qr;
+  uint8_t qrData[qrcode_getBufferSize(3)];
+  qrcode_initText(&qr, qrData, 3, ECC_LOW, ABOUT_URL);
+
+  const int scale = 2;
+  const int qpx   = qr.size * scale;      // 29 * 2 = 58 px
+  const int ox    = 2;
+  const int oy    = (64 - qpx) / 2;       // vertically centered
+  for (uint8_t y = 0; y < qr.size; y++)
+    for (uint8_t x = 0; x < qr.size; x++)
+      if (qrcode_getModule(&qr, x, y))
+        oled.drawBox(ox + x * scale, oy + y * scale, scale, scale);
+
+  const int tx = ox + qpx + 6;            // text column (~66)
+  oled.setFont(u8g2_font_ncenB08_tr);
+  oled.drawStr(tx, 12, "Netatmo");
+  oled.drawStr(tx, 24, "Home Hub");
+  oled.drawStr(tx, 44, "v" APP_VERSION);
+  oled.drawStr(tx, 58, GIT_COMMIT);
+  oled.sendBuffer();
+}
+
+// Long-press handler: toggle the About screen, pausing/resuming the carousel.
+void toggleAbout()
+{
+  g_aboutMode = !g_aboutMode;
+  if (g_aboutMode) { g_aboutStart = millis(); drawAbout(); }
+  else             { g_lastCardSwitch = millis(); drawCard(g_card); }
+}
 #endif
