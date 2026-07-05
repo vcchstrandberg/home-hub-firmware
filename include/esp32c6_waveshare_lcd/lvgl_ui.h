@@ -34,13 +34,23 @@ void setBacklight(uint8_t percent);
 void setOnTap(void (*callback)());
 
 // Register a callback fired once when a press is held past the long-press
-// threshold (~600 ms). Fires while the finger is still down; the matching
-// release is then swallowed (no tap). Pass nullptr to disable.
+// threshold (~600 ms) WITHOUT moving (a moved press is treated as a swipe).
+// Fires while the finger is still down; the matching release is then swallowed.
+// Pass nullptr to disable.
 void setOnLongPress(void (*callback)());
 
-// Show dashboard page (0) or forecast page (1). Updates the page-indicator
-// dots. The two pages share the screen; only one is visible at a time.
+// Register a horizontal-swipe callback. dir is -1 for a left swipe (next page)
+// and +1 for a right swipe (previous page). Pass nullptr to disable.
+void setOnSwipe(void (*callback)(int dir));
+
+// Show page 0..2 (dashboard / forecast / about). Updates the page-indicator
+// dots. The pages share the screen; only one is visible at a time.
 void showPage(uint8_t page);
+
+// Populate the About page (static info; call once after init). url is encoded
+// as the QR code.
+void setAbout(const char* name, const char* version, const char* commit,
+              const char* date, const char* url);
 
 // Modal overlays (hide the dashboard while shown).
 void showBootSplash(const char* version, const char* date, const char* commit);

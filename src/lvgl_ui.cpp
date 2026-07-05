@@ -113,14 +113,22 @@ static lv_indev_drv_t     s_indev_drv;
 // returns, guarded against re-entry.
 static void (*s_onTap)()       = nullptr;
 static void (*s_onLongPress)() = nullptr;
+static void (*s_onSwipe)(int)  = nullptr;
 static bool          s_wasPressed = false;
 static volatile bool s_tapPending = false;
-// Long-press: record when a press begins; tick() fires s_onLongPress once the
-// hold passes the threshold, then s_longFired swallows the release so it isn't
-// also counted as a tap.
-static const uint32_t   LONGPRESS_MS = 600;
+// Gesture state. A press records its start point and time; each read updates
+// the current point. On release we classify: a horizontal drag past
+// SWIPE_MIN_PX is a swipe; a still hold past LONGPRESS_MS is a long-press
+// (fired from tick() while held); anything else is a (currently unused) tap.
+static const uint32_t LONGPRESS_MS  = 600;
+static const int      SWIPE_MIN_PX  = 40;   // min horizontal travel for a swipe
+static const int      MOVE_TOL_PX   = 16;   // movement under this still counts as a hold
 static volatile uint32_t s_pressStart = 0;
 static volatile bool     s_longFired  = false;
+static volatile int      s_startX = 0, s_startY = 0;
+static volatile int      s_curX = 0,   s_curY = 0;
+static volatile bool     s_swipePending = false;
+static volatile int      s_swipeDir     = 0;  // -1 left, +1 right
 
 static void touchpad_read_cb(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
   touch_data_t td;
@@ -131,6 +139,8 @@ static void touchpad_read_cb(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
     data->point.x = td.coords[0].x;
     data->point.y = td.coords[0].y;
     data->state   = LV_INDEV_STATE_PRESSED;
+    s_curX = td.coords[0].x;
+    s_curY = td.coords[0].y;
   } else {
     data->state   = LV_INDEV_STATE_RELEASED;
   }
@@ -138,9 +148,18 @@ static void touchpad_read_cb(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
   if (!s_wasPressed && nowPressed) {          // press begins
     s_pressStart = millis();
     s_longFired  = false;
+    s_startX = s_curX = td.coords[0].x;
+    s_startY = s_curY = td.coords[0].y;
   }
   if (s_wasPressed && !nowPressed) {          // release
-    if (!s_longFired) s_tapPending = true;    // long-press already handled its own event
+    int dx = s_curX - s_startX;
+    int dy = s_curY - s_startY;
+    if (!s_longFired && abs(dx) >= SWIPE_MIN_PX && abs(dx) > abs(dy)) {
+      s_swipeDir     = (dx < 0) ? -1 : +1;    // left = next, right = previous
+      s_swipePending = true;
+    } else if (!s_longFired && abs(dx) < MOVE_TOL_PX && abs(dy) < MOVE_TOL_PX) {
+      s_tapPending = true;                    // a genuine tap (unused unless wired)
+    }
   }
   s_wasPressed = nowPressed;
 }
@@ -190,7 +209,14 @@ struct {
   // Pages (full-screen containers; one visible at a time) + indicator dots.
   lv_obj_t* page_dash;
   lv_obj_t* page_fc;
-  lv_obj_t* dots[2];
+  lv_obj_t* page_about;
+  lv_obj_t* dots[3];
+
+  // About page
+  lv_obj_t* about_name;        // "Netatmo Home Hub"
+  lv_obj_t* about_version;     // "v2.3"
+  lv_obj_t* about_build;       // "abc1234 · Jul 5 2026"
+  lv_obj_t* about_qr;          // QR code to the repo
 
   // Forecast page
   lv_obj_t* fc_title;          // "TOMORROW"
@@ -460,15 +486,26 @@ static FcIcon iconForSymbol(const char* code) {
 }
 
 // ─── Page management ──────────────────────────────────────────────────────────
-static uint8_t s_page = 0;  // 0 = dashboard, 1 = forecast
+static const uint8_t PAGE_COUNT = 3;   // dashboard, forecast, about
+static const int     DOT_BAND   = 14;  // reserved strip at the bottom for the dots
+static uint8_t s_page = 0;             // 0 = dashboard, 1 = forecast, 2 = about
+
+// About-page info, set once via setAbout() and cached so a layout rebuild
+// (orientation flip) can repopulate without the caller re-supplying it.
+static String s_abtName    = "Netatmo Home Hub";
+static String s_abtVersion = "?";
+static String s_abtBuild   = "";
+static String s_abtUrl     = "https://github.com/vcchstrandberg/home-hub-firmware";
 
 // Build the forecast page contents into a full-screen page container. Uses a
-// centered flex column so the same builder works in both orientations.
+// centered flex column so the same builder works in both orientations; a bottom
+// pad reserves room for the page-indicator dots.
 static void buildForecastPage(lv_obj_t* pg) {
   lv_obj_set_flex_flow(pg, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(pg, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_row(pg, 10, LV_PART_MAIN);
-  lv_obj_set_style_pad_all(pg, 10, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(pg, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(pg, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_bottom(pg, DOT_BAND, LV_PART_MAIN);
 
   ui.fc_title = lv_label_create(pg);
   lv_label_set_text(ui.fc_title, "TOMORROW");
@@ -519,36 +556,73 @@ static void buildForecastPage(lv_obj_t* pg) {
   lv_obj_set_style_text_font(ui.fc_precip, &lv_font_montserrat_14, 0);
 }
 
-// Two page-indicator dots, bottom-center of the screen, drawn on top of the
-// pages. The active page's dot is white; the other is muted.
+// Build the About page: name, version, build info, and a QR code to the repo.
+// Centered flex column with a reserved bottom band for the dots.
+static void buildAboutPage(lv_obj_t* pg) {
+  lv_obj_set_flex_flow(pg, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(pg, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_row(pg, 6, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(pg, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_bottom(pg, DOT_BAND, LV_PART_MAIN);
+
+  ui.about_name = lv_label_create(pg);
+  lv_label_set_text(ui.about_name, s_abtName.c_str());
+  lv_obj_set_style_text_color(ui.about_name, lv_color_hex(COL_OUTDOOR_ACC), 0);
+  lv_obj_set_style_text_font(ui.about_name, &lv_font_montserrat_14, 0);
+
+  ui.about_version = lv_label_create(pg);
+  lv_label_set_text(ui.about_version, (String("v") + s_abtVersion).c_str());
+  lv_obj_set_style_text_color(ui.about_version, lv_color_white(), 0);
+  lv_obj_set_style_text_font(ui.about_version, &lv_font_montserrat_14, 0);
+
+  ui.about_build = lv_label_create(pg);
+  lv_label_set_text(ui.about_build, s_abtBuild.c_str());
+  lv_obj_set_style_text_color(ui.about_build, lv_color_hex(COL_MUTED), 0);
+  lv_obj_set_style_text_font(ui.about_build, &lv_font_montserrat_12, 0);
+
+  // White padded box gives the QR a quiet zone so scanners lock on reliably.
+  lv_obj_t* qbox = lv_obj_create(pg);
+  lv_obj_set_size(qbox, 86, 86);
+  lv_obj_set_style_bg_color(qbox, lv_color_white(), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(qbox, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_width(qbox, 0, LV_PART_MAIN);
+  lv_obj_set_style_radius(qbox, 4, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(qbox, 5, LV_PART_MAIN);
+  lv_obj_clear_flag(qbox, LV_OBJ_FLAG_SCROLLABLE);
+
+  ui.about_qr = lv_qrcode_create(qbox, 76, lv_color_black(), lv_color_white());
+  lv_obj_center(ui.about_qr);
+  lv_qrcode_update(ui.about_qr, s_abtUrl.c_str(), s_abtUrl.length());
+}
+
+// Three page-indicator dots in the reserved bottom band, drawn on top of the
+// pages. The active page's dot is white; the others muted.
 static void buildDots(lv_obj_t* scr) {
-  for (int i = 0; i < 2; i++) {
+  for (int i = 0; i < PAGE_COUNT; i++) {
     ui.dots[i] = lv_obj_create(scr);
-    lv_obj_set_size(ui.dots[i], 8, 8);
+    lv_obj_set_size(ui.dots[i], 7, 7);
     lv_obj_set_style_bg_opa(ui.dots[i], LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(ui.dots[i], 0, LV_PART_MAIN);
     lv_obj_set_style_radius(ui.dots[i], LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_pad_all(ui.dots[i], 0, LV_PART_MAIN);
     lv_obj_clear_flag(ui.dots[i], LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_align(ui.dots[i], LV_ALIGN_BOTTOM_MID, i == 0 ? -8 : 8, -4);
+    lv_obj_align(ui.dots[i], LV_ALIGN_BOTTOM_MID, (i - 1) * 12, -4);
   }
 }
 
-// Apply s_page: toggle page visibility and recolor the dots. Safe to call after
-// a rebuild to restore the previously-selected page.
+// Apply s_page: show the active page, hide the others, recolor the dots. Safe
+// to call after a rebuild to restore the previously-selected page.
 static void applyPage() {
-  if (!ui.page_dash || !ui.page_fc) return;
-  if (s_page == 0) {
-    lv_obj_clear_flag(ui.page_dash, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(ui.page_fc, LV_OBJ_FLAG_HIDDEN);
-  } else {
-    lv_obj_add_flag(ui.page_dash, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(ui.page_fc, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_t* pages[PAGE_COUNT] = { ui.page_dash, ui.page_fc, ui.page_about };
+  for (int i = 0; i < PAGE_COUNT; i++) {
+    if (!pages[i]) continue;
+    if (i == s_page) lv_obj_clear_flag(pages[i], LV_OBJ_FLAG_HIDDEN);
+    else             lv_obj_add_flag(pages[i], LV_OBJ_FLAG_HIDDEN);
   }
-  if (ui.dots[0]) lv_obj_set_style_bg_color(ui.dots[0],
-      lv_color_hex(s_page == 0 ? 0xFFFFFF : COL_MUTED), LV_PART_MAIN);
-  if (ui.dots[1]) lv_obj_set_style_bg_color(ui.dots[1],
-      lv_color_hex(s_page == 1 ? 0xFFFFFF : COL_MUTED), LV_PART_MAIN);
+  for (int i = 0; i < PAGE_COUNT; i++) {
+    if (ui.dots[i]) lv_obj_set_style_bg_color(ui.dots[i],
+        lv_color_hex(i == s_page ? 0xFFFFFF : COL_MUTED), LV_PART_MAIN);
+  }
 }
 
 // Full-screen page container: solid background, no border/padding.
@@ -596,9 +670,10 @@ static void buildLandscape() {
   ui.outdoor_sun = createSun(outdoor);
   lv_obj_align(ui.outdoor_sun, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
 
-  // Rain card: spans full width, card-styled to match indoor/outdoor.
+  // Rain card: spans full width, card-styled to match indoor/outdoor. Height
+  // leaves DOT_BAND clear at the bottom for the page-indicator dots.
   ui.rain_row = lv_obj_create(dash);
-  lv_obj_set_size(ui.rain_row, 316, 60);
+  lv_obj_set_size(ui.rain_row, 316, 52);
   lv_obj_set_pos(ui.rain_row, 2, 108);
   styleContainer(ui.rain_row, COL_CARD_BG, COL_RAIN_BG, 1, 5, 6);
 
@@ -629,6 +704,8 @@ static void buildLandscape() {
 
   ui.page_fc = makePage(scr);
   buildForecastPage(ui.page_fc);
+  ui.page_about = makePage(scr);
+  buildAboutPage(ui.page_about);
 
   buildDots(scr);
   createModal(scr, 320, 172);
@@ -652,9 +729,10 @@ static void buildPortrait() {
   lv_obj_align(ui.outdoor_sun, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
 
   // Rain card: full width, card-styled. Three lines (small REGN header,
-  // then 1h and 24h values stacked at 24pt).
+  // then 1h and 24h values stacked at 24pt). Height leaves DOT_BAND clear at
+  // the bottom for the page-indicator dots.
   ui.rain_row = lv_obj_create(dash);
-  lv_obj_set_size(ui.rain_row, 168, 104);
+  lv_obj_set_size(ui.rain_row, 168, 92);
   lv_obj_set_pos(ui.rain_row, 2, 214);
   styleContainer(ui.rain_row, COL_CARD_BG, COL_RAIN_BG, 1, 5, 6);
 
@@ -684,6 +762,8 @@ static void buildPortrait() {
 
   ui.page_fc = makePage(scr);
   buildForecastPage(ui.page_fc);
+  ui.page_about = makePage(scr);
+  buildAboutPage(ui.page_about);
 
   buildDots(scr);
   createModal(scr, 172, 320);
@@ -771,6 +851,10 @@ void LvglUI::setOrientation(uint8_t rotation) {
   s_rotation = rotation;
   s_gfx->setRotation(rotation);
 
+  // Keep the touch transform aligned with the display so swipe direction stays
+  // correct after a rotation (swipe left/right must map to the on-screen X axis).
+  bsp_touch_set_rotation(rotation, s_gfx->width(), s_gfx->height());
+
   if (aspectChanged) {
     uint32_t w = s_gfx->width();
     uint32_t h = s_gfx->height();
@@ -785,10 +869,6 @@ void LvglUI::setOrientation(uint8_t rotation) {
     // so existing widgets render at the new physical orientation.
     lv_obj_invalidate(lv_scr_act());
   }
-
-  // Touch coordinates may be reported in the old frame until next bsp_touch
-  // re-init, but we only use press/release edges (tap detection), not coords,
-  // so it doesn't matter.
 }
 
 void LvglUI::tick() {
@@ -800,8 +880,10 @@ void LvglUI::tick() {
   static bool inDispatch = false;
   if (inDispatch) return;
 
-  // Long-press fires while the finger is still down, once per hold.
+  // Long-press fires while the finger is still down and hasn't moved (a moved
+  // press is a swipe, handled on release), once per hold.
   if (s_wasPressed && !s_longFired && s_onLongPress &&
+      abs(s_curX - s_startX) < MOVE_TOL_PX && abs(s_curY - s_startY) < MOVE_TOL_PX &&
       (millis() - s_pressStart) >= LONGPRESS_MS) {
     s_longFired = true;
     inDispatch = true;
@@ -810,7 +892,18 @@ void LvglUI::tick() {
     return;
   }
 
-  // Otherwise dispatch a completed short tap.
+  // Dispatch a completed swipe.
+  if (s_swipePending) {
+    s_swipePending = false;
+    if (s_onSwipe) {
+      inDispatch = true;
+      s_onSwipe(s_swipeDir);
+      inDispatch = false;
+      return;
+    }
+  }
+
+  // Otherwise dispatch a completed short tap (unused unless wired).
   if (s_tapPending) {
     s_tapPending = false;
     if (s_onTap) {
@@ -827,6 +920,10 @@ void LvglUI::setOnTap(void (*callback)()) {
 
 void LvglUI::setOnLongPress(void (*callback)()) {
   s_onLongPress = callback;
+}
+
+void LvglUI::setOnSwipe(void (*callback)(int)) {
+  s_onSwipe = callback;
 }
 
 void LvglUI::showBootSplash(const char* version, const char* date, const char* commit) {
@@ -900,8 +997,26 @@ void LvglUI::setRain(const char* label, const char* unit, uint8_t decimals,
 }
 
 void LvglUI::showPage(uint8_t page) {
-  s_page = (page > 1) ? 1 : page;
+  s_page = (page >= PAGE_COUNT) ? (PAGE_COUNT - 1) : page;
   applyPage();
+}
+
+void LvglUI::setAbout(const char* name, const char* version, const char* commit,
+                      const char* date, const char* url) {
+  if (name && *name)       s_abtName = name;
+  if (version && *version) s_abtVersion = version;
+  if (url && *url)         s_abtUrl = url;
+  s_abtBuild = String(commit ? commit : "") +
+               ((commit && *commit && date && *date) ? "  " : "") +
+               (date ? date : "");
+
+  // Repopulate if the page already exists (e.g. called after init or a rebuild).
+  if (ui.about_name) {
+    lv_label_set_text(ui.about_name, s_abtName.c_str());
+    lv_label_set_text(ui.about_version, (String("v") + s_abtVersion).c_str());
+    lv_label_set_text(ui.about_build, s_abtBuild.c_str());
+    if (ui.about_qr) lv_qrcode_update(ui.about_qr, s_abtUrl.c_str(), s_abtUrl.length());
+  }
 }
 
 void LvglUI::setForecast(const char* title, const char* symbolCode, bool hasData,

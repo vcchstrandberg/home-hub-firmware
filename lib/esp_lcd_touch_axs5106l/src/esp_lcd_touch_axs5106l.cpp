@@ -72,6 +72,14 @@ void bsp_touch_init(TwoWire *touch_i2c,int tp_rst, int tp_int, uint16_t rotation
 }
 
 
+void bsp_touch_set_rotation(uint16_t rotation, uint16_t width, uint16_t height)
+{
+    g_rotation = rotation;
+    g_width    = width;
+    g_height   = height;
+}
+
+
 void bsp_touch_read(void)
 {
     uint8_t data[14] = {0};

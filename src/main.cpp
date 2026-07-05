@@ -195,7 +195,8 @@ float  g_fcTempMin      = 0;
 float  g_fcPrecip       = 0;   // mm
 String g_fcSymbol       = "";  // raw met.no symbol_code
 #ifdef WAVESHARE_ESP32C6_LCD
-uint8_t g_page          = 0;   // 0 = dashboard, 1 = forecast
+static const uint8_t PAGE_COUNT = 3;  // dashboard, forecast, about
+uint8_t g_page          = 0;   // 0 = dashboard, 1 = forecast, 2 = about
 #endif
 
 // ── Timing ────────────────────────────────────────────────────────────────────
@@ -225,7 +226,7 @@ void showLocale();
 void cycleLocale();
 #ifdef WAVESHARE_ESP32C6_LCD
 void renderForecast();
-void nextPage();
+void onSwipe(int dir);
 #endif
 
 // ── setup() ───────────────────────────────────────────────────────────────────
@@ -245,9 +246,11 @@ void setup()
 
 #ifdef WAVESHARE_ESP32C6_LCD
   LvglUI::init();
-  // Short tap flips dashboard <-> forecast; long-press cycles the locale.
-  LvglUI::setOnTap(nextPage);
+  // Swipe left/right cycles the three pages; long-press cycles the locale.
+  LvglUI::setOnSwipe(onSwipe);
   LvglUI::setOnLongPress(cycleLocale);
+  LvglUI::setAbout("Netatmo Home Hub", APP_VERSION, GIT_COMMIT, __DATE__,
+                   "https://github.com/vcchstrandberg/home-hub-firmware");
   // Wire is already begun by LvglUI::init() for the touch controller — the
   // QMI8658 shares that I2C bus, so we can init it here without a second
   // Wire.begin().
@@ -603,10 +606,11 @@ void renderForecast()
                       g_loc->rain_unit, g_loc->forecast_na);
 }
 
-// Short-tap handler: flip between the dashboard and forecast pages.
-void nextPage()
+// Swipe handler: cycle the pages. dir -1 = swipe left (next), +1 = right (prev).
+void onSwipe(int dir)
 {
-  g_page ^= 1;
+  if (dir < 0) g_page = (g_page + 1) % PAGE_COUNT;
+  else         g_page = (uint8_t)((g_page + PAGE_COUNT - 1) % PAGE_COUNT);
   LvglUI::showPage(g_page);
 }
 

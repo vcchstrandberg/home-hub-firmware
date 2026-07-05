@@ -27,3 +27,8 @@ void bsp_touch_read(void);
 bool bsp_touch_get_coordinates(touch_data_t *touch_data);
 // bool touch_init(TwoWire *touch_i2c, int tp_rst, int tp_int);
 void bsp_touch_init(TwoWire *touch_i2c,int tp_rst, int tp_int, uint16_t rotation, uint16_t width, uint16_t height);
+
+// Update the coordinate transform after a display rotation change, without
+// re-initialising the controller (no reset / interrupt re-attach). Keeps
+// reported coordinates aligned with the current display orientation.
+void bsp_touch_set_rotation(uint16_t rotation, uint16_t width, uint16_t height);
