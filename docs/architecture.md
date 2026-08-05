@@ -10,7 +10,7 @@ All targets share one `src/main.cpp`, branching by build-flag `#ifdef`. Devices 
 
 ```mermaid
 flowchart TD
-    A(["Power On / Reset"]) --> B["Init display + Serial\n(C6 Touch LCD: LVGL + backlight PWM)"]
+    A(["Power On / Reset"]) --> B["Init display + Serial\n(Waveshare LVGL boards: LVGL + backlight PWM)"]
     B --> S["Boot splash\napp version · build date · git hash\n5 s"]
     S --> F["Show Connecting…"]
     F --> G["Connect to WiFi"]
@@ -19,7 +19,7 @@ flowchart TD
     H -->|Yes| J["fetchWeatherData()"]
     J --> K{"HTTP 200?"}
     K -->|No| ERR["showError(hub_unreachable)"]
-    K -->|Yes| L["parseWeather()\nupdate globals\n(C6 Touch LCD: apply backlight level)"]
+    K -->|Yes| L["parseWeather()\nupdate globals\n(Waveshare LVGL boards: apply backlight level)"]
     L --> M["drawCard()"]
     ERR --> M
     M --> N(["Enter Main Loop"])
@@ -36,13 +36,13 @@ flowchart TD
     btn -->|"Yes — debounced 300 ms"| locale["Advance locale\nsv-SE → en-US → en-GB → fr-FR\nshowLocale() 1.5 s → drawCard()"]
     btn -->|No| orient
 
-    locale --> orient{"C6 Touch LCD:\norientation changed?"}
-    orient -->|"Yes — accelerometer poll ~4 Hz,\n600 ms stable"| rebuild["setOrientation()\nrebuild layout → drawCard()"]
+    locale --> orient{"Waveshare LVGL boards:\norientation changed?"}
+    orient -->|"Yes — accelerometer poll ~4 Hz,\n600 ms stable"| rebuild["setOrientation()\nrebuild layout → drawCard()\n(C6: restore active page; S3: no pages)"]
     orient -->|No| card
     rebuild --> card
 
     card{"CARD_MS elapsed?"}
-    card -->|"Yes — OLED boards only\n(C6 shows full dashboard always)"| rotate["Advance card 0→1→2→0\ndrawCard()"]
+    card -->|"Yes — OLED boards only\n(both Waveshare LVGL boards show a full dashboard always)"| rotate["Advance card 0→1→2→0\ndrawCard()"]
     card -->|No| fetch
     rotate --> fetch
 
@@ -52,7 +52,7 @@ flowchart TD
 
     http --> ok{"HTTP 200?"}
     ok -->|No| err["showError(hub_unreachable)"]
-    ok -->|Yes| parse["parseWeather()\nupdate globals → drawCard()\n(C6 Touch LCD: apply backlight)"]
+    ok -->|Yes| parse["parseWeather()\nupdate globals → drawCard()\n(Waveshare LVGL boards: apply backlight)"]
 
     err --> sleep
     parse --> sleep
@@ -68,8 +68,9 @@ flowchart TD
 | ESP32-C6-Zero | 5 s | 5 min |
 | Uno R4 WiFi | 5 s | 60 s |
 | Waveshare ESP32-C6 Touch LCD | Never — full dashboard | 5 min |
+| Waveshare ESP32-S3-LCD-2.8 | Never — full dashboard | 5 min |
 
-The Uno R4 fetches more frequently because its WiFi module (ESP32-S3 co-processor) keeps the connection open; the ESP32 boards use the same always-on polling approach at a slower rate to reduce Netatmo API load. The C6 Touch LCD shows the full dashboard at once, so it never rotates cards.
+The Uno R4 fetches more frequently because its WiFi module (ESP32-S3 co-processor) keeps the connection open; the ESP32 boards use the same always-on polling approach at a slower rate to reduce Netatmo API load. Both Waveshare LVGL boards show their full dashboard at once, so neither rotates cards.
 
 ---
 
@@ -82,13 +83,13 @@ flowchart TB
         json["ArduinoJson\nJSON parsing"]
         subgraph display_libs["Display"]
             u8g2["U8g2\nSSD1306 OLED\n(ESP32-CAM · DevKit · C6-Zero · Uno R4)"]
-            gfx["Arduino_GFX + LVGL 8.4\nJD9853 TFT\n(Waveshare C6 Touch LCD only)"]
+            gfx["Arduino_GFX + LVGL 8.4\nJD9853 TFT (C6 Touch LCD)\nstock ST7789 TFT (S3 LCD-2.8)"]
         end
         subgraph net_libs["Network"]
-            httpc["HTTPClient\n(ESP32 / ESP32-C6)"]
+            httpc["HTTPClient\n(ESP32 / ESP32-C6 / ESP32-S3)"]
             wificlient["WiFiClient raw HTTP\n(Uno R4)"]
         end
-        imu["FastIMU\nQMI8658 accelerometer\n(C6 Touch LCD only)"]
+        imu["FastIMU\nQMI8658 accelerometer\n(both Waveshare LVGL boards)"]
         main2 --- json
         main2 --- display_libs
         main2 --- net_libs
@@ -98,13 +99,13 @@ flowchart TB
     subgraph platforms["PlatformIO Platforms"]
         renesas["renesas-ra\n(Uno R4)"]
         espressif["espressif32\n(ESP32-CAM · DevKit)"]
-        pioarduino["pioarduino espressif32\n(C6 Touch LCD · C6-Zero — arduino-esp32 3.x)"]
+        pioarduino["pioarduino espressif32\n(C6 Touch LCD · C6-Zero · S3 LCD-2.8 — arduino-esp32 3.x)"]
     end
 
     fw_stack --> platforms
 ```
 
-The two ESP32-C6 targets share the pioarduino platform; only the Touch LCD pulls in Arduino_GFX, LVGL and FastIMU for its integrated panel, touch and accelerometer.
+The C6 and S3 targets share the pioarduino platform; the two LVGL boards (C6 Touch LCD, S3 LCD-2.8) pull in Arduino_GFX, LVGL and FastIMU for their integrated panel and accelerometer — the C6 additionally uses the AXS5106L touch driver, which the S3 board doesn't have.
 
 ---
 
@@ -140,6 +141,14 @@ flowchart TB
         riscv --- touch
     end
 
+    subgraph s3["Waveshare ESP32-S3-LCD-2.8 (non-touch)"]
+        xtensas3["ESP32-S3 — Xtensa LX7, 240 MHz\n802.11 b/g/n · BOOT on GPIO0"]
+        tft3["Stock ST7789 TFT, 240×320 px\n(landscape 320×240) · SPI\nBacklight PWM on GPIO5 (time-of-day dimming)"]
+        imu3["QMI8658 IMU only — no touch controller\nmounted rotated 90° vs. the C6 board"]
+        xtensas3 --- tft3
+        xtensas3 --- imu3
+    end
+
     oled["SSD1306 OLED\n128×64 px · I2C"]
 
     uno -->|"I2C A4/A5"| oled
@@ -148,4 +157,4 @@ flowchart TB
     zero -->|"I2C GPIO6/7"| oled
 ```
 
-The Waveshare ESP32-C6 Touch LCD uses a JD9853 panel (not stock ST7789) that needs a custom register init before its backlight regulator turns on — see [wiring.md](wiring.md) and the display driver in `src/lvgl_ui.cpp`. Its backlight runs on LEDC PWM so the hub can drive time-of-day dimming.
+The Waveshare ESP32-C6 Touch LCD uses a JD9853 panel (not stock ST7789) that needs a custom register init before its backlight regulator turns on — see [wiring.md](wiring.md) and the display driver in `src/lvgl_ui.cpp`. The ESP32-S3-LCD-2.8 uses a stock ST7789 instead, so Arduino_GFX's built-in init is enough — see `src/lvgl_ui_s3.cpp`. Both boards' backlights run on LEDC PWM so the hub can drive time-of-day dimming.

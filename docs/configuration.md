@@ -9,8 +9,9 @@ home-hub-firmware/
 ├── platformio.ini
 ├── src/
 │   ├── main.cpp                       # one source file, all targets via #ifdef
-│   ├── lvgl_ui.cpp                    # C6 LVGL UI (no-op for other targets)
-│   └── orientation.cpp                # C6 accelerometer poller
+│   ├── lvgl_ui.cpp                    # C6 Touch LCD LVGL UI (no-op for other targets)
+│   ├── lvgl_ui_s3.cpp                 # S3 LCD-2.8 LVGL UI, no touch (no-op for other targets)
+│   └── orientation.cpp                # C6 + S3 accelerometer poller, shared (no-op for other targets)
 ├── scripts/version.py                 # injects git commit hash at build time
 ├── include/
 │   ├── esp32c6_waveshare_lcd/
@@ -18,6 +19,7 @@ home-hub-firmware/
 │   │   ├── orientation.h              # orientation poller API
 │   │   ├── lv_conf.h                  # LVGL build config (committed)
 │   │   └── arduino_secrets.h          # you create this (gitignored)
+│   ├── esp32s3_waveshare_lcd/         # same four files as above, adapted for this board
 │   ├── esp32c6_zero/arduino_secrets.h # you create this (gitignored)
 │   ├── esp32cam/arduino_secrets.h     # you create this (gitignored)
 │   ├── esp32dev/arduino_secrets.h     # you create this (gitignored)
@@ -43,9 +45,10 @@ Create the secrets file for your board in its include directory:
 | ESP32 DevKit | `include/esp32dev/arduino_secrets.h` |
 | Arduino Uno R4 WiFi | `include/uno_r4_wifi/arduino_secrets.h` |
 | Waveshare ESP32-C6 Touch LCD | `include/esp32c6_waveshare_lcd/arduino_secrets.h` |
+| Waveshare ESP32-S3-LCD-2.8 | `include/esp32s3_waveshare_lcd/arduino_secrets.h` |
 | Waveshare ESP32-C6-Zero | `include/esp32c6_zero/arduino_secrets.h` |
 
-All four files use the same format — five values:
+All files use the same format — five values:
 
 ```cpp
 #pragma once
@@ -95,6 +98,7 @@ pio run -e esp32dev
 pio run -e uno_r4_wifi
 pio run -e esp32c6_zero
 pio run -e esp32c6_waveshare_lcd
+pio run -e esp32s3_waveshare_lcd
 
 # Compile and upload
 pio run -e esp32cam               --target upload
@@ -102,9 +106,10 @@ pio run -e esp32dev               --target upload
 pio run -e uno_r4_wifi            --target upload
 pio run -e esp32c6_zero           --target upload
 pio run -e esp32c6_waveshare_lcd  --target upload
+pio run -e esp32s3_waveshare_lcd  --target upload
 ```
 
-The first build for each environment downloads the required toolchain and libraries automatically. The two C6 targets share the pioarduino platform (~300 MB, one-time); the Touch LCD env additionally pulls Arduino_GFX, LVGL, and FastIMU.
+The first build for each environment downloads the required toolchain and libraries automatically. The two C6 targets share the pioarduino platform (~300 MB, one-time); both LVGL envs (`esp32c6_waveshare_lcd`, `esp32s3_waveshare_lcd`) additionally pull Arduino_GFX, LVGL, and FastIMU.
 
 ---
 
@@ -130,6 +135,16 @@ pio run -e esp32c6_waveshare_lcd --target upload
 
 ---
 
+## Waveshare ESP32-S3-LCD-2.8 flashing
+
+USB-C cable only, same auto-reset behaviour as the C6 Touch LCD. Both boards can enumerate under the same generic Espressif USB-JTAG descriptor, so if more than one is ever connected at once, always pass an explicit `--upload-port` — don't rely on auto-detect (see [Finding the USB port](#finding-the-usb-port) below).
+
+```bash
+pio run -e esp32s3_waveshare_lcd --target upload --upload-port /dev/cu.usbmodem2301
+```
+
+---
+
 ## Waveshare ESP32-C6-Zero flashing
 
 USB-C only, same auto-reset behaviour as the Touch LCD — enumerates as `/dev/cu.usbmodem2301`. The build flags `-DARDUINO_USB_MODE=1 -DARDUINO_USB_CDC_ON_BOOT=1` route `Serial` to the USB-Serial-JTAG bridge; without them the default UART0 pins (GPIO16/17) are unconnected on this board.
@@ -151,7 +166,7 @@ Plug in the board, run the command, then unplug and run again — the entry that
 
 **Windows:** Device Manager → **Ports (COM & LPT)**.
 
-PlatformIO auto-detects the port when exactly one board is connected.
+PlatformIO auto-detects the port when exactly one board is connected. Both C6 boards and the S3 board enumerate under the same generic Espressif USB-JTAG/serial descriptor (`VID:PID=303A:1001`), so if more than one is plugged in at once, auto-detect can't tell them apart — always pass an explicit `--upload-port` in that case.
 
 ---
 
@@ -165,6 +180,7 @@ pio device monitor -e esp32dev
 pio device monitor -e uno_r4_wifi
 pio device monitor -e esp32c6_zero
 pio device monitor -e esp32c6_waveshare_lcd
+pio device monitor -e esp32s3_waveshare_lcd
 ```
 
 Press **Ctrl-C** to exit. Typical output:
@@ -178,7 +194,7 @@ Orientation: portrait
 Locale: en-US
 ```
 
-> Note: on both C6 targets (`esp32c6_waveshare_lcd` and `esp32c6_zero`), `Serial` is routed to the USB-Serial-JTAG bridge via the build flags `-DARDUINO_USB_MODE=1 -DARDUINO_USB_CDC_ON_BOOT=1`. Without these, the default Serial port (UART0) is unconnected on the Waveshare boards.
+> Note: on the C6 targets (`esp32c6_waveshare_lcd` and `esp32c6_zero`) and the S3 target (`esp32s3_waveshare_lcd`), `Serial` is routed to the USB-Serial-JTAG bridge via the build flags `-DARDUINO_USB_MODE=1 -DARDUINO_USB_CDC_ON_BOOT=1`. Without these, the default Serial port (UART0) is unconnected on the Waveshare boards.
 
 If `pio device monitor` fails (e.g. in non-TTY contexts), use Python `pyserial` directly:
 

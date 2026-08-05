@@ -1,4 +1,4 @@
-#ifdef WAVESHARE_ESP32C6_LCD
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
 
 #include "orientation.h"
 #include <Arduino.h>
@@ -6,7 +6,8 @@
 #include <FastIMU.h>
 #include <math.h>
 
-// QMI8658 lives on the shared touch I2C bus at 0x6B (per Waveshare schematic).
+// QMI8658 lives on the shared I2C bus at 0x6B (per Waveshare schematic —
+// touch bus on the C6 board, display/IMU bus on the S3 board).
 static const uint8_t IMU_ADDRESS = 0x6B;
 // Stable for at least this long before we accept the new orientation.
 static const unsigned long DEBOUNCE_MS = 600;
@@ -42,12 +43,26 @@ bool Orientation::init() {
 //   accelY < 0, |Y| > |X|  → rot 0  (portrait, cable bottom)
 // The Y-sign mapping was inverted in the first cut (both portrait orientations
 // rendered upside down); flipped here after testing on a real device.
+//
+// The ESP32-S3-LCD-2.8's QMI8658 is mounted rotated 90° relative to the C6
+// board, so the axis roles swap (X <-> Y) rather than reusing the C6 mapping
+// as-is — confirmed on real hardware 2026-08-05. Portrait (the ax branch)
+// matched immediately; landscape (the ay branch) initially came out upside
+// down, so its sign is flipped relative to a plain axis swap.
 static int8_t rotationFromAccel(float ax, float ay) {
+#if defined(WAVESHARE_ESP32S3_LCD)
+  if (fabsf(ay) > fabsf(ax)) {
+    return (ay > 0) ? 3 : 1;
+  } else {
+    return (ax > 0) ? 2 : 0;
+  }
+#else
   if (fabsf(ax) > fabsf(ay)) {
     return (ax > 0) ? 1 : 3;
   } else {
     return (ay > 0) ? 2 : 0;
   }
+#endif
 }
 
 int8_t Orientation::poll() {

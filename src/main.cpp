@@ -4,6 +4,7 @@
 
 // ── Platform selection ────────────────────────────────────────────────────────
 // WAVESHARE_ESP32C6_LCD  — Waveshare ESP32-C6 Touch LCD 1.47 (integrated TFT)
+// WAVESHARE_ESP32S3_LCD  — Waveshare ESP32-S3-LCD-2.8, non-touch (integrated TFT)
 // ESP32C6_ZERO_TFT       — Waveshare ESP32-C6-Zero + external 2.4" ILI9341 SPI TFT
 // ESP32C6_ZERO           — Waveshare ESP32-C6-Zero + external SSD1306 (I2C GPIO6/7)
 // ESP32CAM               — AI-Thinker ESP32-CAM + external SSD1306 (I2C GPIO14/15)
@@ -18,6 +19,12 @@
 #  include <WiFi.h>
 #  include <HTTPClient.h>
 #  define BUTTON_PIN 9
+#elif defined(WAVESHARE_ESP32S3_LCD)
+#  include "lvgl_ui.h"
+#  include "orientation.h"
+#  include <WiFi.h>
+#  include <HTTPClient.h>
+#  define BUTTON_PIN 0   // BOOT button — same short-press-cycles-locale role as GPIO9 on the C6 board
 #elif defined(ESP32C6_ZERO_TFT)
 #  include "tft_ui.h"
 #  include <WiFi.h>
@@ -133,8 +140,8 @@ int status = WL_IDLE_STATUS;
 #endif
 
 // ── Display objects ───────────────────────────────────────────────────────────
-#ifdef WAVESHARE_ESP32C6_LCD
-// LVGL widget objects are owned by lvgl_ui.cpp; no globals needed here.
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
+// LVGL widget objects are owned by lvgl_ui.cpp / lvgl_ui_s3.cpp; no globals needed here.
 #elif defined(ESP32C6_ZERO_TFT)
 // LovyanGFX panel object is owned by tft_ui.cpp; no globals needed here.
 #elif !defined(NO_DISPLAY)
@@ -175,7 +182,7 @@ void showFace(bool connected) {
 }
 #endif
 
-#if !defined(WAVESHARE_ESP32C6_LCD) && !defined(ESP32C6_ZERO_TFT) && !defined(NO_DISPLAY)
+#if !defined(WAVESHARE_ESP32C6_LCD) && !defined(WAVESHARE_ESP32S3_LCD) && !defined(ESP32C6_ZERO_TFT) && !defined(NO_DISPLAY)
 static const uint8_t rain_drop_bmp[] PROGMEM = {
     0x18, 0x3C, 0x7E, 0xFF, 0xFF, 0x7E, 0x3C, 0x18,
 };
@@ -216,7 +223,7 @@ static const char* ABOUT_URL = "https://github.com/vcchstrandberg/home-hub-firmw
 uint8_t       g_card           = 0;
 unsigned long g_lastCardSwitch = 0;
 unsigned long g_lastFetch      = 0;
-#ifdef WAVESHARE_ESP32C6_LCD
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
 const unsigned long CARD_MS  = 86400000UL; // effectively never — full dashboard always shown
 const unsigned long FETCH_MS = 300000;
 #elif defined(ESP32C6_ZERO_TFT)
@@ -237,8 +244,10 @@ void drawCard(uint8_t card);
 void showError(const char* title, const char* detail = nullptr);
 void showLocale();
 void cycleLocale();
-#ifdef WAVESHARE_ESP32C6_LCD
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
 void renderForecast();
+#endif
+#ifdef WAVESHARE_ESP32C6_LCD
 void onSwipe(int dir);
 #endif
 #ifdef ABOUT_SCREEN
@@ -261,16 +270,21 @@ void setup()
   showFace(false);  // sad until WiFi connects
 #endif
 
-#ifdef WAVESHARE_ESP32C6_LCD
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
   LvglUI::init();
-  // Swipe left/right cycles the three pages; long-press cycles the locale.
+#ifdef WAVESHARE_ESP32C6_LCD
+  // Swipe left/right cycles the three pages; touch long-press cycles the
+  // locale. The S3 board has neither touch nor paging — it relies solely on
+  // the generic BUTTON_PIN short-press handling below for locale cycling,
+  // and shows current conditions + forecast on one always-visible screen.
   LvglUI::setOnSwipe(onSwipe);
   LvglUI::setOnLongPress(cycleLocale);
   LvglUI::setAbout("Netatmo Home Hub", APP_VERSION, GIT_COMMIT, __DATE__,
                    "https://github.com/vcchstrandberg/home-hub-firmware");
-  // Wire is already begun by LvglUI::init() for the touch controller — the
-  // QMI8658 shares that I2C bus, so we can init it here without a second
-  // Wire.begin().
+#endif
+  // Wire is already begun by LvglUI::init() (for the touch controller on the
+  // C6 board, or directly for the IMU on the S3 board) — the QMI8658 shares
+  // that I2C bus, so we can init it here without a second Wire.begin().
   Orientation::init();
   LvglUI::showBootSplash(APP_VERSION, __DATE__, GIT_COMMIT);
   // Pump LVGL during the splash so the screen actually paints.
@@ -315,7 +329,7 @@ void setup()
     Serial.println("WiFi firmware update available");
 #endif
 
-#ifdef WAVESHARE_ESP32C6_LCD
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
   LvglUI::showConnecting(g_loc->connecting, ssid);
   LvglUI::tick();
 #elif defined(ESP32C6_ZERO_TFT)
@@ -357,7 +371,7 @@ void setup()
 // ── showLocale() ──────────────────────────────────────────────────────────────
 void showLocale()
 {
-#ifdef WAVESHARE_ESP32C6_LCD
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
   LvglUI::showLocale(g_loc->name, g_loc->code);
   unsigned long until = millis() + 1500;
   while (millis() < until) { LvglUI::tick(); delay(20); }
@@ -388,7 +402,7 @@ void cycleLocale()
   if (g_aboutMode) { drawAbout(); return; }  // stay on About; just restore it
 #endif
   if (g_hasData) drawCard(g_card);
-#ifdef WAVESHARE_ESP32C6_LCD
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
   renderForecast();  // re-localize the forecast page too
 #endif
 }
@@ -427,7 +441,7 @@ void loop()
   }
 #endif
 
-#ifdef WAVESHARE_ESP32C6_LCD
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
   // Poll the accelerometer ~4 Hz. The poller does its own debouncing and
   // only returns a committed rotation (0-3) when the orientation has been
   // stable for ~600 ms.
@@ -440,19 +454,24 @@ void loop()
       Serial.println(rot);
       LvglUI::setOrientation((uint8_t)rot);
       if (g_hasData) drawCard(g_card);
-      // The rebuild recreated both pages fresh — repopulate the forecast and
-      // restore whichever page was showing before the flip.
+      // The rebuild recreated the widget tree fresh — repopulate the forecast
+      // (and, on the C6 board, restore whichever page was showing before the
+      // flip; the S3 board has no pages to restore).
       renderForecast();
+#ifdef WAVESHARE_ESP32C6_LCD
       LvglUI::showPage(g_page);
+#endif
     }
   }
 
+#ifdef WAVESHARE_ESP32C6_LCD
   // Auto-return to the dashboard after inactivity: if we're on the forecast or
   // about page and there's been no swipe for a while, snap back to page 0.
   if (g_page != 0 && now - g_lastSwipe >= PAGE_TIMEOUT_MS) {
     g_page = 0;
     LvglUI::showPage(0);
   }
+#endif
 #endif
 
   bool aboutShown = false;
@@ -480,7 +499,7 @@ void loop()
     fetchWeatherData();
   }
 
-#ifdef WAVESHARE_ESP32C6_LCD
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
   // Pump LVGL frequently so animations and redraws stay smooth.
   for (int i = 0; i < 5; i++) { LvglUI::tick(); delay(20); }
 #else
@@ -583,7 +602,7 @@ void parseWeather(const String& json)
     if (g_card > 2) g_card = 0;  // don't leave the carousel parked on a now-gone forecast card
   }
 
-#ifdef WAVESHARE_ESP32C6_LCD
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
   // Hub-computed time-of-day backlight level (0-100). Absent on older hubs —
   // leave brightness untouched in that case.
   int backlight = doc["backlight"] | -1;
@@ -599,7 +618,7 @@ void parseWeather(const String& json)
   if (g_aboutMode) return;  // data is updated, but don't paint over the About screen
 #endif
   drawCard(g_card);
-#ifdef WAVESHARE_ESP32C6_LCD
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
   renderForecast();
 #endif
 }
@@ -607,7 +626,7 @@ void parseWeather(const String& json)
 // ── showError() ───────────────────────────────────────────────────────────────
 void showError(const char* title, const char* detail)
 {
-#ifdef WAVESHARE_ESP32C6_LCD
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
   LvglUI::showError(title, detail, g_loc->retrying);
   LvglUI::tick();
 #elif defined(ESP32C6_ZERO_TFT)
@@ -631,12 +650,12 @@ void showError(const char* title, const char* detail)
 
 // Barometric "high pressure" threshold in hPa. Compared against the raw
 // reading (not the display value) so it's the same cutoff in hPa or inHg.
-// Shared by the two full-dashboard TFT targets (Waveshare LCD + ILI9341).
-#if defined(WAVESHARE_ESP32C6_LCD) || defined(ESP32C6_ZERO_TFT)
+// Shared by the full-dashboard TFT targets (Waveshare LCDs + ILI9341).
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD) || defined(ESP32C6_ZERO_TFT)
 static const float HIGH_PRESSURE_HPA = 1020.0f;
 #endif
 
-#ifdef WAVESHARE_ESP32C6_LCD
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
 
 void drawCard(uint8_t)  // card argument unused — full dashboard always shown
 {
@@ -659,6 +678,7 @@ void renderForecast()
                       g_loc->rain_unit, g_loc->forecast_na);
 }
 
+#ifdef WAVESHARE_ESP32C6_LCD
 // Swipe handler: cycle the pages. dir -1 = swipe left (next), +1 = right (prev).
 void onSwipe(int dir)
 {
@@ -667,6 +687,7 @@ void onSwipe(int dir)
   g_lastSwipe = millis();
   LvglUI::showPage(g_page);
 }
+#endif
 
 #elif defined(ESP32C6_ZERO_TFT)
 
