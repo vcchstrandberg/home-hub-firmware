@@ -62,8 +62,8 @@ Investigated 2026-08-06 by inspecting the actual partition CSVs and board flash 
 |---|---|---|---|
 | `esp32s3_waveshare_lcd` | `default_16MB.csv` (built-in) | 6.25 MB × 2 | Done — v2.8, verified on hardware |
 | `esp32c6_waveshare_lcd` | `partitions_c6_8mb_ota.csv` (custom, repo root) | 3 MB × 2 | Done — see below |
-| `esp32c6_zero_ili9341` | `partitions_c6_8mb_ota.csv` (same custom file) | 3 MB × 2 | Done in code; not yet flashed (board not connected) |
-| `esp32c6_zero` | `ota_nofs_4MB.csv` (built-in) | 1.9375 MB × 2 | Done — see below |
+| `esp32c6_zero_ili9341` | `partitions_c6_8mb_ota.csv` (same custom file) | 3 MB × 2 | Done — see below |
+| `esp32c6_zero` | `ota_nofs_4MB.csv` (built-in) | 1.9375 MB × 2 | Done in code; not yet flashed (board not connected) |
 | `esp32cam` | `ota_nofs_4MB.csv` (built-in) | 1.9375 MB × 2 | Done in code; not yet flashed (board not connected) |
 | `esp32dev` | `ota_nofs_4MB.csv` (built-in) | 1.9375 MB × 2 | Done in code; not yet flashed (board not connected) |
 
@@ -97,13 +97,13 @@ This fits naturally into the existing architecture: the Pi already serves HTTP, 
 
 **Rollback safety:** ESP32 OTA uses two flash partitions (see Phase 0). If the new firmware crashes on first boot, the bootloader automatically falls back to the previous version — but only once Phase 0 has actually given the board a second slot.
 
-**Status: implemented and verified on hardware for `esp32s3_waveshare_lcd`** (firmware v2.10–v2.14; server v1.19–v1.20), then rolled out in code to the rest of the ESP32 fleet 2026-08-06 (`checkForFirmwareUpdate()`, `recordFirmwareUpdateInfo()`, `syncTimeFromNtp()` generalized from S3-only to any board with `OTA_ENV_NAME` defined). `esp32c6_waveshare_lcd` and `esp32c6_zero` additionally verified on hardware the same day (USB flash of the OTA-enabled build; `esp32c6_zero_ili9341`/`esp32cam`/`esp32dev` done in code only, not yet flashed since those boards weren't connected). What's not built yet: the GitHub Actions CI step (binaries are still hand-copied after tagging a release).
+**Status: implemented and verified on hardware for `esp32s3_waveshare_lcd`** (firmware v2.10–v2.14; server v1.19–v1.20), then rolled out in code to the rest of the ESP32 fleet 2026-08-06 (`checkForFirmwareUpdate()`, `recordFirmwareUpdateInfo()`, `syncTimeFromNtp()` generalized from S3-only to any board with `OTA_ENV_NAME` defined). `esp32c6_waveshare_lcd` and `esp32c6_zero_ili9341` additionally verified on hardware the same day (USB flash of the OTA-enabled build; `esp32c6_zero`/`esp32cam`/`esp32dev` done in code only, not yet flashed since those boards weren't connected). What's not built yet: the GitHub Actions CI step (binaries are still hand-copied after tagging a release).
 
 **Incident 2026-08-06 — reboot loop, and the fix.** During live verification, a test intentionally relabeled the server's served version without changing the actual binary (to trigger the download path without needing a real second build). The device correctly detected the mismatch, downloaded, applied, and rebooted — but since the "new" binary was actually identical, `APP_VERSION` came back unchanged, so the *next* boot saw the exact same mismatch and repeated the cycle. Because this check ran in `setup()` **before** the dashboard ever rendered, the device reboot-looped indefinitely without ever showing the app, and had to be recovered with a USB reflash. Root cause: the check had no memory of "I already tried this exact offer and it didn't resolve." Fixed by persisting the last-attempted server version string in NVS (`Preferences`, key `lastOffer`) — a repeat of the *identical* offer is now skipped rather than retried, while any offer that actually changes still triggers normally. The boot-time call also now runs *after* WiFi connects and the update-info splash renders, not blind at the very start of `setup()`. A second, related bug (v2.13) was the `pendingOta` NVS flag surviving across USB flashes (which don't touch NVS) and mis-attributing a later USB update as OTA — fixed by consuming the flag unconditionally on every boot instead of only when a version change is detected.
 
 **What this requires (remaining):**
 - A GitHub Actions workflow that runs `pio run` for each environment and saves the `.bin` outputs, instead of the current hand-copy-after-tagging step.
-- Flashing + verifying `esp32c6_zero_ili9341`, `esp32cam`, `esp32dev` once they're next connected (code is ready; Phase 0's USB reflash hasn't happened for them yet).
+- Flashing + verifying `esp32c6_zero`, `esp32cam`, `esp32dev` once they're next connected (code is ready; Phase 0's USB reflash hasn't happened for them yet).
 - `APP_VERSION` is already `git describe`-derived (see the versioning memory) — CI needs to build from the same tagged commits this repo cuts, so the served version string matches what a real device would report.
 
 ### Update provenance — timestamp + method on the boot splash
@@ -131,4 +131,4 @@ Every `/weather` request (all boards, including the Uno R4) now sends `X-Device-
 | 4 | GitHub Actions firmware CI | Produces versioned binaries automatically |
 | 5 | HTTP OTA via proxy | Enables remote updates from anywhere |
 
-Steps 2 and 3 are done fleet-wide in code as of 2026-08-06 (verified on hardware for `esp32s3_waveshare_lcd`, `esp32c6_waveshare_lcd`, `esp32c6_zero`; the rest await their next USB connection). Steps 4 and 5 are needed for true remote deployment.
+Steps 2 and 3 are done fleet-wide in code as of 2026-08-06 (verified on hardware for `esp32s3_waveshare_lcd`, `esp32c6_waveshare_lcd`, `esp32c6_zero_ili9341`; the rest await their next USB connection). Steps 4 and 5 are needed for true remote deployment.
