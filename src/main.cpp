@@ -24,10 +24,11 @@
 #  include "orientation.h"
 #  include <WiFi.h>
 #  include <HTTPClient.h>
-// OTA Phase 1 — scoped to this target only, since it's the only board with
+// OTA Phase 1/2 — scoped to this target only, since it's the only board with
 // the Phase 0 two-slot partition table (default_16MB.csv) so far. See
 // docs/production-readiness.md.
-#  include <ArduinoOTA.h>
+#  include <ArduinoOTA.h>   // Phase 1: LAN push from a dev machine
+#  include <Update.h>       // Phase 2: device-initiated pull from the proxy
 #  define BUTTON_PIN 0   // BOOT button — same short-press-cycles-locale role as GPIO9 on the C6 board
 #elif defined(ESP32C6_ZERO_TFT)
 #  include "tft_ui.h"
@@ -227,6 +228,10 @@ static const char* ABOUT_URL = "https://github.com/vcchstrandberg/home-hub-firmw
 uint8_t       g_card           = 0;
 unsigned long g_lastCardSwitch = 0;
 unsigned long g_lastFetch      = 0;
+#ifdef WAVESHARE_ESP32S3_LCD
+unsigned long g_lastOtaCheck = 0;
+const unsigned long OTA_CHECK_MS = 86400000UL;  // 24h — OTA Phase 2 version poll
+#endif
 #if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
 const unsigned long CARD_MS  = 86400000UL; // effectively never — full dashboard always shown
 const unsigned long FETCH_MS = 300000;
@@ -253,6 +258,9 @@ void renderForecast();
 #endif
 #ifdef WAVESHARE_ESP32C6_LCD
 void onSwipe(int dir);
+#endif
+#ifdef WAVESHARE_ESP32S3_LCD
+void checkForFirmwareUpdate();
 #endif
 #ifdef ABOUT_SCREEN
 void drawAbout();
@@ -375,6 +383,11 @@ void setup()
   Serial.print("IP: "); Serial.println(WiFi.localIP());
   ArduinoOTA.setHostname(DEVICE_NAME);
   ArduinoOTA.begin();
+
+  // OTA Phase 2 — check the proxy for a newer version on every boot, then
+  // every OTA_CHECK_MS after that (see the loop() call below).
+  checkForFirmwareUpdate();
+  g_lastOtaCheck = millis();
 #endif
 
   fetchWeatherData();
@@ -428,6 +441,10 @@ void loop()
 
 #ifdef WAVESHARE_ESP32S3_LCD
   ArduinoOTA.handle();
+  if (now - g_lastOtaCheck >= OTA_CHECK_MS) {
+    g_lastOtaCheck = now;
+    checkForFirmwareUpdate();
+  }
 #endif
 
   // Button. On the Uno a long press (>=600 ms) toggles the About screen and
@@ -640,6 +657,77 @@ void parseWeather(const String& json)
   renderForecast();
 #endif
 }
+
+#ifdef WAVESHARE_ESP32S3_LCD
+// ── checkForFirmwareUpdate() ────────────────────────────────────────────────
+// OTA Phase 2: pull-based update over the same proxy /weather already uses.
+// GET .../version (plain text, e.g. "2.10"); if it differs from our own
+// APP_VERSION, GET .../bin and flash it via Update. Any failure (proxy
+// unreachable, no firmware published for this env, bad transfer) is silently
+// skipped — same resilience posture as fetchWeatherData(), this just runs
+// far less often. On success this function does not return: ESP.restart()
+// reboots into the new firmware immediately.
+void checkForFirmwareUpdate()
+{
+  const char* env = "esp32s3_waveshare_lcd";
+  String base = String("http://") + PROXY_HOST + ":" + String(PROXY_PORT) + "/firmware/" + env;
+
+  HTTPClient verHttp;
+  verHttp.begin(base + "/version");
+  verHttp.setTimeout(5000);
+  int verCode = verHttp.GET();
+  if (verCode != 200) {
+    if (verCode > 0) { Serial.print("OTA: version check HTTP "); Serial.println(verCode); }
+    verHttp.end();
+    return;
+  }
+  String serverVersion = verHttp.getString();
+  verHttp.end();
+  serverVersion.trim();
+
+  if (serverVersion.length() == 0 || serverVersion == APP_VERSION) return;  // up to date
+
+  Serial.print("OTA: "); Serial.print(APP_VERSION); Serial.print(" -> "); Serial.println(serverVersion);
+
+  HTTPClient binHttp;
+  binHttp.begin(base + "/bin");
+  binHttp.setTimeout(30000);
+  int binCode = binHttp.GET();
+  if (binCode != 200) {
+    Serial.print("OTA: bin fetch HTTP "); Serial.println(binCode);
+    binHttp.end();
+    return;
+  }
+
+  int len = binHttp.getSize();
+  if (len <= 0) {
+    Serial.println("OTA: missing/invalid content length");
+    binHttp.end();
+    return;
+  }
+  if (!Update.begin(len)) {
+    Serial.print("OTA: Update.begin failed: "); Serial.println(Update.errorString());
+    binHttp.end();
+    return;
+  }
+
+  size_t written = Update.writeStream(*binHttp.getStreamPtr());
+  binHttp.end();
+  if (written != (size_t)len) {
+    Serial.print("OTA: wrote "); Serial.print(written); Serial.print("/"); Serial.println(len);
+    Update.abort();
+    return;
+  }
+  if (!Update.end() || !Update.isFinished()) {
+    Serial.print("OTA: Update.end failed: "); Serial.println(Update.errorString());
+    return;
+  }
+
+  Serial.println("OTA: update applied, rebooting");
+  Serial.flush();
+  ESP.restart();
+}
+#endif
 
 // ── showError() ───────────────────────────────────────────────────────────────
 void showError(const char* title, const char* detail)
