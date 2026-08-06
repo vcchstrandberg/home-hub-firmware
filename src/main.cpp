@@ -739,7 +739,10 @@ static void recordFirmwareUpdateInfo(String& outTimestamp, String& outMethod) {
   // mis-attribute a later, unrelated update. Reading+clearing it here means
   // it can never survive more than one boot cycle.
   bool wasOta = prefs.getBool("pendingOta", false);
-  prefs.remove("pendingOta");
+  // Preferences::remove() logs an ESP_LOGE line for a key that's already
+  // absent — harmless (most boots have nothing to consume), but looks like a
+  // real error in the log, so only call it when there's actually a key there.
+  if (prefs.isKey("pendingOta")) prefs.remove("pendingOta");
 
   if (prefs.getString("ver", "") != String(APP_VERSION)) {
     time_t now = time(nullptr);
