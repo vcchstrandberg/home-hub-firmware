@@ -96,12 +96,27 @@ This fits naturally into the existing architecture: the Pi already serves HTTP, 
 
 **Rollback safety:** ESP32 OTA uses two flash partitions (see Phase 0). If the new firmware crashes on first boot, the bootloader automatically falls back to the previous version — but only once Phase 0 has actually given the board a second slot.
 
-**What this requires:**
-- Phase 0 completed for the target board (two-slot partition table).
-- A GitHub Actions workflow that runs `pio run` for each environment and saves the `.bin` outputs.
-- Two new routes on the proxy: `/firmware/<env>/version` and `/firmware/<env>/bin`.
-- OTA check logic in the firmware (a few dozen lines using `HTTPClient` + `Update`).
+**Status: implemented and verified on hardware for `esp32s3_waveshare_lcd`** (firmware v2.10/v2.11; server v1.19). The two proxy routes, and `checkForFirmwareUpdate()` in `main.cpp`, both work as designed — confirmed with a real download → `Update` → `ESP.restart()` → reboot → reconnect cycle, not just a successful HTTP transfer. What's not built yet: the GitHub Actions CI step (binaries are still hand-copied after tagging a release) and the other boards' Phase 0 migration (see the table above) — this is proven on one board, not fleet-wide.
+
+**Incident 2026-08-06 — reboot loop, and the fix.** During live verification, a test intentionally relabeled the server's served version without changing the actual binary (to trigger the download path without needing a real second build). The device correctly detected the mismatch, downloaded, applied, and rebooted — but since the "new" binary was actually identical, `APP_VERSION` came back unchanged, so the *next* boot saw the exact same mismatch and repeated the cycle. Because this check ran in `setup()` **before** the dashboard ever rendered, the device reboot-looped indefinitely without ever showing the app, and had to be recovered with a USB reflash. Root cause: the check had no memory of "I already tried this exact offer and it didn't resolve." Fixed by persisting the last-attempted server version string in NVS (`Preferences`, key `lastOffer`) — a repeat of the *identical* offer is now skipped rather than retried, while any offer that actually changes still triggers normally. The boot-time call (re-enabled after this fix) also now runs *after* WiFi connects and the update-info splash renders, not blind at the very start of `setup()`.
+
+**What this requires (remaining):**
+- A GitHub Actions workflow that runs `pio run` for each environment and saves the `.bin` outputs, instead of the current hand-copy-after-tagging step.
+- Phase 0 + this same wiring for the other boards (see the Phase 0 table above) — currently `esp32s3_waveshare_lcd` only.
 - `APP_VERSION` is already `git describe`-derived (see the versioning memory) — CI needs to build from the same tagged commits this repo cuts, so the served version string matches what a real device would report.
+
+### Update provenance — timestamp + method on the boot splash
+
+`esp32s3_waveshare_lcd` only. The boot splash now shows a fifth line, e.g. `Updated 2026-08-06 19:04 UTC (OTA)`, so a glance at the screen answers "when did this last get flashed, and how" without needing serial access.
+
+- **Method** (`OTA` vs `USB`): there's no code path for a USB reflash to leave a marker before rebooting — esptool writes flash directly. So `OTA` is recorded explicitly (an NVS flag, `pendingOta`, set just before the reboot in both `checkForFirmwareUpdate()` and `ArduinoOTA`'s `onEnd` hook) and `USB` is simply the default whenever that flag is absent.
+- **Timestamp**: real wall-clock time needs NTP (`configTime()` + `getLocalTime()`, `pool.ntp.org` / `time.nist.gov`, UTC, 5 s timeout) — this device has no RTC. Best-effort: if NTP fails (no internet reachable from the WiFi network, not just LAN-to-the-Pi), the previously-recorded timestamp is left alone rather than blocking boot or showing garbage.
+- **Detection**: on every boot, `recordFirmwareUpdateInfo()` compares `APP_VERSION` against the last value it recorded (NVS key `ver`). A change means this is the first boot on newly-flashed content, so it records "now" + the method and moves on; no change means an ordinary reboot, and it just re-reports whatever was recorded last time.
+- All of this lives in NVS, not the served `/firmware/.../version.txt` — it reflects what's *actually running on this specific device*, independent of what the proxy happens to be serving.
+
+### Server-visible device firmware version
+
+Every `/weather` request (all boards, not just S3) now sends `X-Device-Firmware: <APP_VERSION>` alongside the existing `X-Device-Name`/`X-Device-Id` headers. The proxy stores it in a new `fw_version` column on the `devices` table (idempotent `ALTER TABLE` migration, same pattern as the existing `user_agent` column) and shows it as a badge in the admin device list. Empty for any device that hasn't checked in since this header was added. See `netatmo-home-hub`'s revision history for the server-side half.
 
 ---
 

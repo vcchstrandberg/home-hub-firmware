@@ -29,6 +29,7 @@
 // docs/production-readiness.md.
 #  include <ArduinoOTA.h>   // Phase 1: LAN push from a dev machine
 #  include <Update.h>       // Phase 2: device-initiated pull from the proxy
+#  include <Preferences.h>  // NVS-backed update bookkeeping (timestamp/method/retry-guard)
 #  define BUTTON_PIN 0   // BOOT button — same short-press-cycles-locale role as GPIO9 on the C6 board
 #elif defined(ESP32C6_ZERO_TFT)
 #  include "tft_ui.h"
@@ -261,6 +262,23 @@ void onSwipe(int dir);
 #endif
 #ifdef WAVESHARE_ESP32S3_LCD
 void checkForFirmwareUpdate();
+static void syncTimeFromNtp();
+static void recordFirmwareUpdateInfo(String& outTimestamp, String& outMethod);
+// NVS ("Preferences") namespace + keys for update bookkeeping. Shared by
+// checkForFirmwareUpdate(), the ArduinoOTA onEnd hook in setup(), and
+// recordFirmwareUpdateInfo().
+//   ver          last APP_VERSION we recorded an update event for
+//   ts           unix time (UTC) of that event, or 0 if NTP never synced
+//   method       "OTA" or "USB" for that event
+//   pendingOta   set just before a reboot caused by either OTA path (Phase 1
+//                push or Phase 2 pull); read once on the next boot to tell
+//                an OTA-caused version change apart from a USB reflash,
+//                which has no code path to set anything before rebooting —
+//                USB is therefore the default when this flag is absent
+//   lastOffer    the server-offered version string Phase 2 most recently
+//                attempted, whether or not it actually changed APP_VERSION —
+//                see the incident note in checkForFirmwareUpdate() below
+static const char* FW_PREFS_NS = "fwmeta";
 #endif
 #ifdef ABOUT_SCREEN
 void drawAbout();
@@ -298,10 +316,16 @@ void setup()
   // C6 board, or directly for the IMU on the S3 board) — the QMI8658 shares
   // that I2C bus, so we can init it here without a second Wire.begin().
   Orientation::init();
+#ifdef WAVESHARE_ESP32C6_LCD
   LvglUI::showBootSplash(APP_VERSION, __DATE__, GIT_COMMIT);
   // Pump LVGL during the splash so the screen actually paints.
   unsigned long splashUntil = millis() + 5000;
   while (millis() < splashUntil) { LvglUI::tick(); delay(20); }
+#endif
+  // S3: the boot splash is shown later, after WiFi connects — it now
+  // includes the last-update timestamp/method, which need NTP/NVS that
+  // aren't available yet at this point in boot. See the WAVESHARE_ESP32S3_LCD
+  // block below.
 
 #elif defined(ESP32C6_ZERO_TFT)
   TftUI::init();
@@ -376,16 +400,38 @@ void setup()
 #endif
 
 #ifdef WAVESHARE_ESP32S3_LCD
-  // OTA Phase 1 (unauthenticated — same trusted home LAN only; add
-  // ArduinoOTA.setPassword() before this is exposed any more broadly).
-  // No mDNS lookup needed: `pio run --target upload --upload-port <ip>`
-  // targets this printed IP directly.
+  // No mDNS lookup needed for OTA Phase 1: `pio run --target upload
+  // --upload-port <ip>` targets this printed IP directly.
   Serial.print("IP: "); Serial.println(WiFi.localIP());
+
+  // OTA Phase 1 (unauthenticated — same trusted home LAN only; add
+  // ArduinoOTA.setPassword() before this is exposed any more broadly). The
+  // onEnd hook fires just before ArduinoOTA's own restart, so it lands the
+  // same "this reboot came from OTA, not USB" marker checkForFirmwareUpdate()
+  // sets for a Phase 2 pull — see recordFirmwareUpdateInfo().
   ArduinoOTA.setHostname(DEVICE_NAME);
+  ArduinoOTA.onEnd([]() {
+    Preferences p;
+    p.begin(FW_PREFS_NS, false);
+    p.putBool("pendingOta", true);
+    p.end();
+  });
   ArduinoOTA.begin();
 
-  // OTA Phase 2 — check the proxy for a newer version on every boot, then
-  // every OTA_CHECK_MS after that (see the loop() call below).
+  // Needed only to timestamp the update-info splash below; best-effort.
+  syncTimeFromNtp();
+  String updatedAt, updateMethod;
+  recordFirmwareUpdateInfo(updatedAt, updateMethod);
+
+  LvglUI::showBootSplash(APP_VERSION, __DATE__, GIT_COMMIT,
+                         updatedAt.c_str(), updateMethod.c_str());
+  unsigned long splashUntil = millis() + 5000;
+  while (millis() < splashUntil) { LvglUI::tick(); delay(20); }
+
+  // OTA Phase 2 — re-enabled 2026-08-06 after the reboot-loop fix above
+  // (see the incident note on checkForFirmwareUpdate()): a repeat of the
+  // exact same non-resolving server offer is now skipped instead of retried
+  // forever, so this is safe to run at boot again.
   checkForFirmwareUpdate();
   g_lastOtaCheck = millis();
 #endif
@@ -553,6 +599,8 @@ void fetchWeatherData()
   http.addHeader("X-Device-Name", DEVICE_NAME);
   // Stable per-board identifier — the hub uses MAC, not IP, to key its registry.
   http.addHeader("X-Device-Id", WiFi.macAddress());
+  // git-describe string (see scripts/version.py) — shown in the hub's device list.
+  http.addHeader("X-Device-Firmware", APP_VERSION);
   int code = http.GET();
   if (code != 200) {
     Serial.printf("Proxy HTTP %d\n", code);
@@ -587,6 +635,7 @@ void fetchWeatherData()
   snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   client.print(macStr);
+  client.print("\r\nX-Device-Firmware: " APP_VERSION);
   client.print("\r\nConnection: close\r\n\r\n");
 
   unsigned long t = millis() + 5000;
@@ -659,6 +708,57 @@ void parseWeather(const String& json)
 }
 
 #ifdef WAVESHARE_ESP32S3_LCD
+// Sync wall-clock time over NTP. The only thing in this firmware that needs
+// real time is the update-event timestamp below; best-effort, since a failed
+// sync (no internet reachable from this WiFi, DNS hiccup) shouldn't block
+// boot — it just leaves the previously-recorded timestamp in place.
+static void syncTimeFromNtp() {
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo, 5000)) {
+    Serial.println("NTP sync failed (no internet?) — update timestamp may be stale");
+  }
+}
+
+// Detect whether this boot is running firmware not yet recorded (APP_VERSION
+// differs from the last-recorded "ver") and, if so, record *when* (now, if
+// NTP synced — call syncTimeFromNtp() first) and *how* (OTA vs USB, from the
+// pendingOta flag left by whichever path caused this reboot). Always returns
+// the currently-recorded info via the out params, so repeated calls across
+// ordinary reboots (no new flash) keep reporting the same past event.
+static void recordFirmwareUpdateInfo(String& outTimestamp, String& outMethod) {
+  Preferences prefs;
+  prefs.begin(FW_PREFS_NS, false);
+
+  if (prefs.getString("ver", "") != String(APP_VERSION)) {
+    bool wasOta = prefs.getBool("pendingOta", false);
+    prefs.remove("pendingOta");
+
+    time_t now = time(nullptr);
+    // NTP hasn't synced if this is still near the epoch; 1700000000 ~= Nov
+    // 2023, comfortably below any real "now" but well past a default clock.
+    unsigned long ts = (now > 1700000000) ? (unsigned long)now : 0;
+
+    prefs.putString("ver", APP_VERSION);
+    prefs.putULong("ts", ts);
+    prefs.putString("method", wasOta ? "OTA" : "USB");
+  }
+
+  unsigned long storedTs = prefs.getULong("ts", 0);
+  outMethod = prefs.getString("method", "unknown");
+  prefs.end();
+
+  if (storedTs == 0) {
+    outTimestamp = "unknown time";
+  } else {
+    time_t t = (time_t)storedTs;
+    struct tm* lt = gmtime(&t);
+    char buf[24];
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", lt);
+    outTimestamp = String(buf) + " UTC";
+  }
+}
+
 // ── checkForFirmwareUpdate() ────────────────────────────────────────────────
 // OTA Phase 2: pull-based update over the same proxy /weather already uses.
 // GET .../version (plain text, e.g. "2.10"); if it differs from our own
@@ -667,6 +767,18 @@ void parseWeather(const String& json)
 // skipped — same resilience posture as fetchWeatherData(), this just runs
 // far less often. On success this function does not return: ESP.restart()
 // reboots into the new firmware immediately.
+//
+// Incident 2026-08-06: a live test briefly left the server offering a
+// version string that would never resolve to a match (same binary, relabeled
+// purely to trigger a test). Because this ran at every boot before the
+// dashboard loaded, the device reboot-looped — applying the "update" (which
+// changed nothing), rebooting, seeing the same offer again, and repeating,
+// never reaching fetchWeatherData(). Fixed by persisting the last-attempted
+// offer (NVS "lastOffer"): if the server is still offering the exact string
+// we already tried, skip — no point retrying until the offer actually
+// changes. A genuinely new offer always clears/overwrites this, so normal
+// updates are unaffected; only a repeat of the *same* non-resolving offer is
+// suppressed.
 void checkForFirmwareUpdate()
 {
   const char* env = "esp32s3_waveshare_lcd";
@@ -686,6 +798,16 @@ void checkForFirmwareUpdate()
   serverVersion.trim();
 
   if (serverVersion.length() == 0 || serverVersion == APP_VERSION) return;  // up to date
+
+  Preferences prefs;
+  prefs.begin(FW_PREFS_NS, false);
+  String lastOffer = prefs.getString("lastOffer", "");
+  if (serverVersion == lastOffer) {
+    prefs.end();
+    return;  // already tried this exact offer once; it didn't resolve — don't retry until it changes
+  }
+  prefs.putString("lastOffer", serverVersion);
+  prefs.end();
 
   Serial.print("OTA: "); Serial.print(APP_VERSION); Serial.print(" -> "); Serial.println(serverVersion);
 
@@ -722,6 +844,11 @@ void checkForFirmwareUpdate()
     Serial.print("OTA: Update.end failed: "); Serial.println(Update.errorString());
     return;
   }
+
+  Preferences donePrefs;
+  donePrefs.begin(FW_PREFS_NS, false);
+  donePrefs.putBool("pendingOta", true);
+  donePrefs.end();
 
   Serial.println("OTA: update applied, rebooting");
   Serial.flush();

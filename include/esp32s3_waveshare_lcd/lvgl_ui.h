@@ -37,8 +37,11 @@ void tick();
 // The hub computes the level (time-of-day dimming) and sends it in /weather.
 void setBacklight(uint8_t percent);
 
-// Modal overlays (hide the dashboard while shown).
-void showBootSplash(const char* version, const char* date, const char* commit);
+// Modal overlays (hide the dashboard while shown). updatedAt/updateMethod are
+// this board's OTA bookkeeping (see checkForFirmwareUpdate() in main.cpp) —
+// when this firmware was last flashed and whether that was OTA or USB.
+void showBootSplash(const char* version, const char* date, const char* commit,
+                    const char* updatedAt, const char* updateMethod);
 void showConnecting(const char* hint, const char* ssid);
 void showLocale(const char* name, const char* code);
 void showError(const char* title, const char* detail, const char* retrying);
