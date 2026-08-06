@@ -422,6 +422,7 @@ void setup()
   syncTimeFromNtp();
   String updatedAt, updateMethod;
   recordFirmwareUpdateInfo(updatedAt, updateMethod);
+  Serial.print("Updated: "); Serial.print(updatedAt); Serial.print(" ("); Serial.print(updateMethod); Serial.println(")");
 
   LvglUI::showBootSplash(APP_VERSION, __DATE__, GIT_COMMIT,
                          updatedAt.c_str(), updateMethod.c_str());
