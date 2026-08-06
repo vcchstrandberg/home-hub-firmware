@@ -24,6 +24,10 @@
 #  include "orientation.h"
 #  include <WiFi.h>
 #  include <HTTPClient.h>
+// OTA Phase 1 — scoped to this target only, since it's the only board with
+// the Phase 0 two-slot partition table (default_16MB.csv) so far. See
+// docs/production-readiness.md.
+#  include <ArduinoOTA.h>
 #  define BUTTON_PIN 0   // BOOT button — same short-press-cycles-locale role as GPIO9 on the C6 board
 #elif defined(ESP32C6_ZERO_TFT)
 #  include "tft_ui.h"
@@ -363,6 +367,16 @@ void setup()
   showFace(WiFi.status() == WL_CONNECTED);  // happy once we're online
 #endif
 
+#ifdef WAVESHARE_ESP32S3_LCD
+  // OTA Phase 1 (unauthenticated — same trusted home LAN only; add
+  // ArduinoOTA.setPassword() before this is exposed any more broadly).
+  // No mDNS lookup needed: `pio run --target upload --upload-port <ip>`
+  // targets this printed IP directly.
+  Serial.print("IP: "); Serial.println(WiFi.localIP());
+  ArduinoOTA.setHostname(DEVICE_NAME);
+  ArduinoOTA.begin();
+#endif
+
   fetchWeatherData();
   g_lastFetch      = millis();
   g_lastCardSwitch = millis();
@@ -411,6 +425,10 @@ void cycleLocale()
 void loop()
 {
   unsigned long now = millis();
+
+#ifdef WAVESHARE_ESP32S3_LCD
+  ArduinoOTA.handle();
+#endif
 
   // Button. On the Uno a long press (>=600 ms) toggles the About screen and
   // fires as soon as the threshold is reached (while still held) for a snappy

@@ -70,11 +70,17 @@ Done for `esp32s3_waveshare_lcd` as of v2.8 (`board_build.partitions = default_1
 
 ### Phase 1 — Arduino OTA (same network, no cable)
 
-ESP32 has built-in OTA support. Once enabled, `pio run -e esp32cam --target upload --upload-port <device-ip>` pushes firmware over WiFi — no cable needed. PlatformIO handles this transparently by adding `upload_protocol = espota` to the environment. Requires Phase 0 (a two-slot partition table) to actually be safe.
+ESP32 has built-in OTA support. Once enabled, `pio run -e <env> --target upload --upload-port <device-ip>` pushes firmware over WiFi — no cable needed. Requires Phase 0 (a two-slot partition table) to actually be safe.
 
 **Limitation:** requires the developer's machine to be on the same local network as the device. Good enough for home use, not for remote deployment.
 
 **Implementation note:** the codebase has a few synchronous busy-wait loops (boot splash, `showLocale()`) that don't pump anything else while blocked. `ArduinoOTA.handle()` in `loop()` won't run during those few seconds — acceptable (OTA just isn't reachable mid-splash/mid-locale-cycle), but worth calling out rather than discovering it as a bug later.
+
+**Env pattern:** `upload_protocol = espota` is set on a *separate* PlatformIO env (`esp32s3_waveshare_lcd_ota`, via `extends = env:esp32s3_waveshare_lcd`) rather than on the base env. Setting it on the base env would make plain `-e esp32s3_waveshare_lcd --target upload` try to reach the device over WiFi by default — breaking the first install (the ArduinoOTA listener isn't running yet) and removing the USB fallback. PlatformIO Core 6.1.19's `extends` needs the `env:` prefix (`extends = env:esp32s3_waveshare_lcd`, not just the bare name) — the bare form silently drops the inherited `platform`/`board` and fails with `UndefinedEnvPlatformError`.
+
+**Verified on hardware 2026-08-06:** flashed the ArduinoOTA-enabled build via USB once (required — the listener has to already be running before anything can reach it over WiFi), read the device's DHCP IP off serial, then pushed the same build again via `pio run -e esp32s3_waveshare_lcd_ota --target upload --upload-port <ip>`. Transfer completed (`Result attempt 1: 'OK'`), device rebooted on its own, and reconnected to WiFi and the hub normally — confirmed by reading boot serial after a forced reset. Currently unauthenticated (no `ArduinoOTA.setPassword()`) — fine for this same-LAN verification, but add a password before relying on this day to day.
+
+Only `esp32s3_waveshare_lcd` has this wired up so far (it's the only board with Phase 0 done). The other boards need their own Phase 0 migration first (see the table above), then the same `ArduinoOTA` + `_ota` env pattern.
 
 ### Phase 2 — HTTP OTA via the proxy server (recommended for production)
 
