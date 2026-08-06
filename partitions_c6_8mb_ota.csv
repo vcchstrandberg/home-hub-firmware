@@ -1,0 +1,16 @@
+# OTA-capable two-slot partition table for the ESP32-C6 8MB-flash Waveshare
+# boards (esp32c6_waveshare_lcd, esp32c6_zero_ili9341). Confirmed via
+# esptool flash-id directly on hardware 2026-08-06 (chip: ESP32-C6FH8,
+# 8MB embedded flash) — see docs/production-readiness.md OTA Phase 0.
+#
+# huge_app.csv (previously used by both) has an otadata partition but only
+# one app slot — no A/B rollback safety despite otadata being present. This
+# gives two real 3MB slots instead, well within the 8MB chip (uses ~6.1MB of
+# 8MB total). No spiffs partition — neither board uses a filesystem.
+#
+# Name,   Type, SubType, Offset,  Size, Flags
+nvs,      data, nvs,     0x9000,  0x5000,
+otadata,  data, ota,     0xe000,  0x2000,
+app0,     app,  ota_0,   0x10000, 0x300000,
+app1,     app,  ota_1,   0x310000,0x300000,
+coredump, data, coredump,0x610000,0x10000,

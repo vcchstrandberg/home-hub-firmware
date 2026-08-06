@@ -926,9 +926,12 @@ void LvglUI::setOnSwipe(void (*callback)(int)) {
   s_onSwipe = callback;
 }
 
-void LvglUI::showBootSplash(const char* version, const char* date, const char* commit) {
+void LvglUI::showBootSplash(const char* version, const char* date, const char* commit,
+                            const char* updatedAt, const char* updateMethod) {
   String t = String("Netatmo Home Hub\nv") + (version ? version : "?") +
-             "\n" + (date ? date : "?") + "\n" + (commit ? commit : "?");
+             "\n" + (date ? date : "?") + "\n" + (commit ? commit : "?") +
+             "\nUpdated " + (updatedAt ? updatedAt : "?") +
+             " (" + (updateMethod ? updateMethod : "?") + ")";
   showModal(t.c_str(), COL_BG);
 }
 

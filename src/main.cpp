@@ -13,41 +13,64 @@
 //
 // Devices call the local Raspberry Pi proxy over plain HTTP — no TLS, no OAuth.
 
+// OTA (Phases 1/2 — see docs/production-readiness.md) is enabled per ESP32
+// target once its Phase 0 two-slot partition table is in place; OTA_ENV_NAME
+// is the PlatformIO environment name, used to build the /firmware/<env>/...
+// URLs. Not defined for the Uno R4 (different chip family, out of scope) or
+// for any ESP32 board that hasn't had its Phase 0 migration done yet.
 #ifdef WAVESHARE_ESP32C6_LCD
 #  include "lvgl_ui.h"
 #  include "orientation.h"
 #  include <WiFi.h>
 #  include <HTTPClient.h>
+#  include <ArduinoOTA.h>
+#  include <Update.h>
+#  include <Preferences.h>
 #  define BUTTON_PIN 9
+#  define OTA_ENV_NAME "esp32c6_waveshare_lcd"
 #elif defined(WAVESHARE_ESP32S3_LCD)
 #  include "lvgl_ui.h"
 #  include "orientation.h"
 #  include <WiFi.h>
 #  include <HTTPClient.h>
-// OTA Phase 1/2 — scoped to this target only, since it's the only board with
-// the Phase 0 two-slot partition table (default_16MB.csv) so far. See
-// docs/production-readiness.md.
 #  include <ArduinoOTA.h>   // Phase 1: LAN push from a dev machine
 #  include <Update.h>       // Phase 2: device-initiated pull from the proxy
 #  include <Preferences.h>  // NVS-backed update bookkeeping (timestamp/method/retry-guard)
 #  define BUTTON_PIN 0   // BOOT button — same short-press-cycles-locale role as GPIO9 on the C6 board
+#  define OTA_ENV_NAME "esp32s3_waveshare_lcd"
 #elif defined(ESP32C6_ZERO_TFT)
 #  include "tft_ui.h"
 #  include <WiFi.h>
 #  include <HTTPClient.h>
+#  include <ArduinoOTA.h>
+#  include <Update.h>
+#  include <Preferences.h>
 #  define BUTTON_PIN 9
+#  define OTA_ENV_NAME "esp32c6_zero_ili9341"
 #elif defined(ESP32C6_ZERO)
 #  include <U8g2lib.h>
 #  include <Wire.h>
 #  include <WiFi.h>
 #  include <HTTPClient.h>
+#  include <ArduinoOTA.h>
+#  include <Update.h>
+#  include <Preferences.h>
 #  define BUTTON_PIN 9
+#  define OTA_ENV_NAME "esp32c6_zero"
 #elif defined(ESP32)
 #  include <U8g2lib.h>
 #  include <Wire.h>
 #  include <WiFi.h>
 #  include <HTTPClient.h>
+#  include <ArduinoOTA.h>
+#  include <Update.h>
+#  include <Preferences.h>
 #  define BUTTON_PIN 0
+#  ifdef ESP32CAM
+#    define OTA_ENV_NAME "esp32cam"
+#  else
+#    define OTA_ENV_NAME "esp32dev"
+#  endif
 #else
 #  include <U8g2lib.h>
 #  include <Wire.h>
@@ -229,7 +252,7 @@ static const char* ABOUT_URL = "https://github.com/vcchstrandberg/home-hub-firmw
 uint8_t       g_card           = 0;
 unsigned long g_lastCardSwitch = 0;
 unsigned long g_lastFetch      = 0;
-#ifdef WAVESHARE_ESP32S3_LCD
+#ifdef OTA_ENV_NAME
 unsigned long g_lastOtaCheck = 0;
 const unsigned long OTA_CHECK_MS = 86400000UL;  // 24h — OTA Phase 2 version poll
 #endif
@@ -260,7 +283,7 @@ void renderForecast();
 #ifdef WAVESHARE_ESP32C6_LCD
 void onSwipe(int dir);
 #endif
-#ifdef WAVESHARE_ESP32S3_LCD
+#ifdef OTA_ENV_NAME
 void checkForFirmwareUpdate();
 static void syncTimeFromNtp();
 static void recordFirmwareUpdateInfo(String& outTimestamp, String& outMethod);
@@ -316,21 +339,15 @@ void setup()
   // C6 board, or directly for the IMU on the S3 board) — the QMI8658 shares
   // that I2C bus, so we can init it here without a second Wire.begin().
   Orientation::init();
-#ifdef WAVESHARE_ESP32C6_LCD
-  LvglUI::showBootSplash(APP_VERSION, __DATE__, GIT_COMMIT);
-  // Pump LVGL during the splash so the screen actually paints.
-  unsigned long splashUntil = millis() + 5000;
-  while (millis() < splashUntil) { LvglUI::tick(); delay(20); }
-#endif
-  // S3: the boot splash is shown later, after WiFi connects — it now
-  // includes the last-update timestamp/method, which need NTP/NVS that
-  // aren't available yet at this point in boot. See the WAVESHARE_ESP32S3_LCD
+  // The boot splash (both LVGL boards) is shown later, after WiFi connects —
+  // it now includes the last-update timestamp/method, which need NTP/NVS
+  // that aren't available yet at this point in boot. See the OTA_ENV_NAME
   // block below.
 
 #elif defined(ESP32C6_ZERO_TFT)
   TftUI::init();
-  TftUI::showBootSplash(APP_VERSION, __DATE__, GIT_COMMIT);
-  delay(5000);
+  // Boot splash shown later, after WiFi connects — see the OTA_ENV_NAME
+  // block below (same reasoning as the LVGL boards above).
 
 #elif !defined(NO_DISPLAY)
 #  ifdef ESP32CAM
@@ -399,7 +416,7 @@ void setup()
   showFace(WiFi.status() == WL_CONNECTED);  // happy once we're online
 #endif
 
-#ifdef WAVESHARE_ESP32S3_LCD
+#ifdef OTA_ENV_NAME
   // No mDNS lookup needed for OTA Phase 1: `pio run --target upload
   // --upload-port <ip>` targets this printed IP directly.
   Serial.print("IP: "); Serial.println(WiFi.localIP());
@@ -418,21 +435,30 @@ void setup()
   });
   ArduinoOTA.begin();
 
-  // Needed only to timestamp the update-info splash below; best-effort.
+  // Needed only to timestamp the update-info splash/log below; best-effort.
   syncTimeFromNtp();
   String updatedAt, updateMethod;
   recordFirmwareUpdateInfo(updatedAt, updateMethod);
   Serial.print("Updated: "); Serial.print(updatedAt); Serial.print(" ("); Serial.print(updateMethod); Serial.println(")");
 
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
   LvglUI::showBootSplash(APP_VERSION, __DATE__, GIT_COMMIT,
                          updatedAt.c_str(), updateMethod.c_str());
   unsigned long splashUntil = millis() + 5000;
   while (millis() < splashUntil) { LvglUI::tick(); delay(20); }
+#elif defined(ESP32C6_ZERO_TFT)
+  TftUI::showBootSplash(APP_VERSION, __DATE__, GIT_COMMIT,
+                        updatedAt.c_str(), updateMethod.c_str());
+  delay(5000);
+#endif
+  // OLED boards (esp32cam/esp32dev/esp32c6_zero): the splash already ran
+  // earlier in setup(), before WiFi — no room on a 128x64 panel for a 5th
+  // line, so the "Updated:" Serial line above is the only place this shows.
 
-  // OTA Phase 2 — re-enabled 2026-08-06 after the reboot-loop fix above
-  // (see the incident note on checkForFirmwareUpdate()): a repeat of the
-  // exact same non-resolving server offer is now skipped instead of retried
-  // forever, so this is safe to run at boot again.
+  // OTA Phase 2 — re-enabled 2026-08-06 after the reboot-loop fix (see the
+  // incident note on checkForFirmwareUpdate()): a repeat of the exact same
+  // non-resolving server offer is now skipped instead of retried forever,
+  // so this is safe to run at boot.
   checkForFirmwareUpdate();
   g_lastOtaCheck = millis();
 #endif
@@ -486,7 +512,7 @@ void loop()
 {
   unsigned long now = millis();
 
-#ifdef WAVESHARE_ESP32S3_LCD
+#ifdef OTA_ENV_NAME
   ArduinoOTA.handle();
   if (now - g_lastOtaCheck >= OTA_CHECK_MS) {
     g_lastOtaCheck = now;
@@ -708,7 +734,7 @@ void parseWeather(const String& json)
 #endif
 }
 
-#ifdef WAVESHARE_ESP32S3_LCD
+#ifdef OTA_ENV_NAME
 // Sync wall-clock time over NTP. The only thing in this firmware that needs
 // real time is the update-event timestamp below; best-effort, since a failed
 // sync (no internet reachable from this WiFi, DNS hiccup) shouldn't block
@@ -792,8 +818,7 @@ static void recordFirmwareUpdateInfo(String& outTimestamp, String& outMethod) {
 // suppressed.
 void checkForFirmwareUpdate()
 {
-  const char* env = "esp32s3_waveshare_lcd";
-  String base = String("http://") + PROXY_HOST + ":" + String(PROXY_PORT) + "/firmware/" + env;
+  String base = String("http://") + PROXY_HOST + ":" + String(PROXY_PORT) + "/firmware/" + OTA_ENV_NAME;
 
   HTTPClient verHttp;
   verHttp.begin(base + "/version");

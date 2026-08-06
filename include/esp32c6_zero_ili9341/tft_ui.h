@@ -14,7 +14,11 @@ namespace TftUI {
 void init();
 
 // Modal boot/status screens (each clears the panel and shows centered text).
-void showBootSplash(const char* version, const char* date, const char* commit);
+// updatedAt/updateMethod are this board's OTA bookkeeping (see
+// checkForFirmwareUpdate() in main.cpp) — when this firmware was last
+// flashed and whether that was OTA or USB.
+void showBootSplash(const char* version, const char* date, const char* commit,
+                    const char* updatedAt, const char* updateMethod);
 void showConnecting(const char* hint, const char* ssid);
 void showLocale(const char* name, const char* code);
 void showError(const char* title, const char* detail, const char* retrying);

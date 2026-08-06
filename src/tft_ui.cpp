@@ -203,7 +203,8 @@ void init() {
   tft.fillScreen(TFT_BLACK);
 }
 
-void showBootSplash(const char* version, const char* date, const char* commit) {
+void showBootSplash(const char* version, const char* date, const char* commit,
+                    const char* updatedAt, const char* updateMethod) {
   tft.fillScreen(TFT_BLACK);
   centered(70,  2, TFT_YELLOW, "Netatmo");
   centered(98,  2, TFT_YELLOW, "Home Hub");
@@ -212,6 +213,9 @@ void showBootSplash(const char* version, const char* date, const char* commit) {
   centered(150, 2, TFT_WHITE, buf);
   centered(190, 1, TFT_CYAN, date);
   centered(206, 1, TFT_CYAN, commit);
+  char upd[48];
+  snprintf(upd, sizeof(upd), "Updated %s (%s)", updatedAt ? updatedAt : "?", updateMethod ? updateMethod : "?");
+  centered(226, 1, TFT_CYAN, upd);
 }
 
 void showConnecting(const char* hint, const char* ssid) {
