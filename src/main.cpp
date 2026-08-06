@@ -731,10 +731,17 @@ static void recordFirmwareUpdateInfo(String& outTimestamp, String& outMethod) {
   Preferences prefs;
   prefs.begin(FW_PREFS_NS, false);
 
-  if (prefs.getString("ver", "") != String(APP_VERSION)) {
-    bool wasOta = prefs.getBool("pendingOta", false);
-    prefs.remove("pendingOta");
+  // Consume pendingOta unconditionally, on every boot — not just inside the
+  // version-changed branch below. USB flashing doesn't touch NVS at all, so
+  // a flag left set by an OTA event that (for whatever reason) wasn't
+  // followed by a boot reaching this code — a crash, a skipped build, a
+  // manual USB flash landing in between — would otherwise survive to
+  // mis-attribute a later, unrelated update. Reading+clearing it here means
+  // it can never survive more than one boot cycle.
+  bool wasOta = prefs.getBool("pendingOta", false);
+  prefs.remove("pendingOta");
 
+  if (prefs.getString("ver", "") != String(APP_VERSION)) {
     time_t now = time(nullptr);
     // NTP hasn't synced if this is still near the epoch; 1700000000 ~= Nov
     // 2023, comfortably below any real "now" but well past a default clock.
