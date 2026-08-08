@@ -21,8 +21,6 @@ home-hub-firmware/
 │   │   └── arduino_secrets.h          # you create this (gitignored)
 │   ├── esp32s3_waveshare_lcd/         # same four files as above, adapted for this board
 │   ├── esp32c6_zero/arduino_secrets.h # you create this (gitignored)
-│   ├── esp32cam/arduino_secrets.h     # you create this (gitignored)
-│   ├── esp32dev/arduino_secrets.h     # you create this (gitignored)
 │   └── uno_r4_wifi/arduino_secrets.h  # you create this (gitignored)
 ├── lib/
 │   └── esp_lcd_touch_axs5106l/        # vendored supplier touch driver
@@ -41,8 +39,6 @@ Create the secrets file for your board in its include directory:
 
 | Board | Secrets file path |
 |---|---|
-| AI-Thinker ESP32-CAM | `include/esp32cam/arduino_secrets.h` |
-| ESP32 DevKit | `include/esp32dev/arduino_secrets.h` |
 | Arduino Uno R4 WiFi | `include/uno_r4_wifi/arduino_secrets.h` |
 | Waveshare ESP32-C6 Touch LCD | `include/esp32c6_waveshare_lcd/arduino_secrets.h` |
 | Waveshare ESP32-S3-LCD-2.8 | `include/esp32s3_waveshare_lcd/arduino_secrets.h` |
@@ -93,16 +89,12 @@ From the repo root:
 
 ```bash
 # Compile only
-pio run -e esp32cam
-pio run -e esp32dev
 pio run -e uno_r4_wifi
 pio run -e esp32c6_zero
 pio run -e esp32c6_waveshare_lcd
 pio run -e esp32s3_waveshare_lcd
 
 # Compile and upload
-pio run -e esp32cam               --target upload
-pio run -e esp32dev               --target upload
 pio run -e uno_r4_wifi            --target upload
 pio run -e esp32c6_zero           --target upload
 pio run -e esp32c6_waveshare_lcd  --target upload
@@ -110,18 +102,6 @@ pio run -e esp32s3_waveshare_lcd  --target upload
 ```
 
 The first build for each environment downloads the required toolchain and libraries automatically. The two C6 targets share the pioarduino platform (~300 MB, one-time); both LVGL envs (`esp32c6_waveshare_lcd`, `esp32s3_waveshare_lcd`) additionally pull Arduino_GFX, LVGL, and FastIMU.
-
----
-
-## ESP32-CAM flashing
-
-The ESP32-CAM has no USB port — it requires a USB-to-serial adapter (FTDI or CH340) wired to its UART0 pins (GPIO1/GPIO3). See [wiring.md](wiring.md) for the connection diagram.
-
-To enter bootloader mode before uploading:
-1. Connect **IO0 → GND**.
-2. Press **RST** (or briefly disconnect and reconnect power).
-3. Run `pio run -e esp32cam --target upload`.
-4. After upload completes, **disconnect IO0 from GND** and press RST to boot normally.
 
 ---
 
@@ -175,8 +155,6 @@ PlatformIO auto-detects the port when exactly one board is connected. Both C6 bo
 Each board prints boot diagnostics and runtime status at 115200 baud:
 
 ```bash
-pio device monitor -e esp32cam
-pio device monitor -e esp32dev
 pio device monitor -e uno_r4_wifi
 pio device monitor -e esp32c6_zero
 pio device monitor -e esp32c6_waveshare_lcd

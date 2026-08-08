@@ -15,7 +15,7 @@ All boards show the same weather data. Labels and units follow the active locale
 
 ---
 
-## SSD1306 OLED — 128×64 px (ESP32-CAM · ESP32 DevKit · Uno R4 WiFi)
+## SSD1306 OLED — 128×64 px (ESP32-C6-Zero · Uno R4 WiFi)
 
 Three full-screen cards rotate every 5 seconds. Each card has a 16×16 Open Iconic weather icon, a large primary value in logisoso28 font, and a smaller secondary line.
 

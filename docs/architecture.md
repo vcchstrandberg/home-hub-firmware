@@ -63,8 +63,6 @@ flowchart TD
 
 | Board | Card rotation (CARD_MS) | Fetch interval (FETCH_MS) |
 |---|---|---|
-| ESP32-CAM | 5 s | 5 min |
-| ESP32 DevKit | 5 s | 5 min |
 | ESP32-C6-Zero | 5 s | 5 min |
 | Uno R4 WiFi | 5 s | 60 s |
 | Waveshare ESP32-C6 Touch LCD | Never — full dashboard | 5 min |
@@ -82,7 +80,7 @@ flowchart TB
         main2["main.cpp\nApplication logic (all targets via #ifdef)"]
         json["ArduinoJson\nJSON parsing"]
         subgraph display_libs["Display"]
-            u8g2["U8g2\nSSD1306 OLED\n(ESP32-CAM · DevKit · C6-Zero · Uno R4)"]
+            u8g2["U8g2\nSSD1306 OLED\n(C6-Zero · Uno R4)"]
             gfx["Arduino_GFX + LVGL 8.4\nJD9853 TFT (C6 Touch LCD)\nstock ST7789 TFT (S3 LCD-2.8)"]
         end
         subgraph net_libs["Network"]
@@ -98,14 +96,13 @@ flowchart TB
 
     subgraph platforms["PlatformIO Platforms"]
         renesas["renesas-ra\n(Uno R4)"]
-        espressif["espressif32\n(ESP32-CAM · DevKit)"]
-        pioarduino["pioarduino espressif32\n(C6 Touch LCD · C6-Zero · S3 LCD-2.8 — arduino-esp32 3.x)"]
+        pioarduino["pioarduino espressif32\n(C6 Touch LCD · C6-Zero · C6-Zero ILI9341 · S3 LCD-2.8 — arduino-esp32 3.x)"]
     end
 
     fw_stack --> platforms
 ```
 
-The C6 and S3 targets share the pioarduino platform; the two LVGL boards (C6 Touch LCD, S3 LCD-2.8) pull in Arduino_GFX, LVGL and FastIMU for their integrated panel and accelerometer — the C6 additionally uses the AXS5106L touch driver, which the S3 board doesn't have.
+All four ESP32 targets are pinned to the same pioarduino platform release (an unpinned `platform = espressif32` was found to resolve inconsistently between a machine with an existing package cache and a from-scratch CI runner — see `docs/production-readiness.md`'s CI section); the two LVGL boards (C6 Touch LCD, S3 LCD-2.8) additionally pull in Arduino_GFX, LVGL and FastIMU for their integrated panel and accelerometer — the C6 additionally uses the AXS5106L touch driver, which the S3 board doesn't have.
 
 ---
 
@@ -117,15 +114,6 @@ flowchart TB
         ra4m1["Renesas RA4M1\nMain MCU — sketch runs here\n48 MHz Cortex-M4"]
         esp32s3["ESP32-S3 co-processor\nWiFi 802.11 b/g/n\nInternal UART (AT modem protocol)"]
         ra4m1 <-->|"WiFiS3 library"| esp32s3
-    end
-
-    subgraph devkit["ESP32 DevKit"]
-        lx6["Xtensa LX6, 240 MHz\nSingle chip — MCU + WiFi + BT"]
-    end
-
-    subgraph cam["AI-Thinker ESP32-CAM"]
-        lx6cam["Xtensa LX6, 240 MHz\nSame SoC as DevKit"]
-        note["Camera pins GPIO14/15\nrepurposed as I2C for OLED"]
     end
 
     subgraph zero["Waveshare ESP32-C6-Zero"]
@@ -152,8 +140,6 @@ flowchart TB
     oled["SSD1306 OLED\n128×64 px · I2C"]
 
     uno -->|"I2C A4/A5"| oled
-    devkit -->|"I2C GPIO21/22"| oled
-    cam -->|"I2C GPIO14/15"| oled
     zero -->|"I2C GPIO6/7"| oled
 ```
 

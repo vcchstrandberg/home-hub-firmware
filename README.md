@@ -12,8 +12,6 @@ Devices call `GET http://<pi>:8080/weather` and render the response. No tokens, 
 | `esp32s3_waveshare_lcd` | Waveshare ESP32-S3-LCD-2.8 (non-touch) | ESP32-S3, 240 MHz | Integrated 240×320 IPS TFT (stock ST7789) | Accelerometer (QMI8658), BOOT button — no touch panel |
 | `esp32c6_zero` | Waveshare ESP32-C6-Zero | ESP32-C6 RISC-V, 160 MHz | SSD1306 128×64 OLED (GPIO6/7) | BOOT button (GPIO9) |
 | `esp32c6_zero_ili9341` | Waveshare ESP32-C6-Zero | ESP32-C6 RISC-V, 160 MHz | 2.4″ ILI9341 240×320 SPI TFT (SCLK18/MOSI19/MISO20/DC4/CS5/RST3) | BOOT button (GPIO9) |
-| `esp32cam` | AI-Thinker ESP32-CAM | Xtensa LX6, 240 MHz | SSD1306 128×64 OLED (GPIO14/15) | BOOT button |
-| `esp32dev` | Generic ESP32 DevKit | Xtensa LX6, 240 MHz | SSD1306 128×64 OLED (GPIO21/22) | BOOT button |
 | `uno_r4_wifi` | Arduino Uno R4 WiFi | Renesas RA4M1, 48 MHz | SSD1306 128×64 OLED (A4/A5) | D7 button, onboard 12×8 LED matrix (WiFi status) |
 
 OLED targets use U8g2 with three rotating cards. Both Waveshare LVGL boards use **Arduino_GFX + LVGL 8.4** with a card-based dashboard that auto-switches between landscape and portrait via the on-board accelerometer: `esp32c6_waveshare_lcd` cycles dashboard/forecast/about pages via touch swipe, while `esp32s3_waveshare_lcd` has no touch panel, so it instead shows current conditions **and** tomorrow's forecast together on one always-visible 2×2 grid (no paging, no About page). The `esp32c6_zero_ili9341` target drives an external 2.4″ ILI9341 SPI TFT with **LovyanGFX** (TFT_eSPI doesn't build for the ESP32-C6) showing a full stacked portrait dashboard.
@@ -57,8 +55,6 @@ home-hub-firmware/
 │   ├── esp32s3_waveshare_lcd/         # lvgl_ui.h, orientation.h, lv_conf.h, arduino_secrets.h
 │   ├── esp32c6_zero/                  # arduino_secrets.h
 │   ├── esp32c6_zero_ili9341/          # tft_ui.h, arduino_secrets.h
-│   ├── esp32cam/                      # arduino_secrets.h
-│   ├── esp32dev/                      # arduino_secrets.h
 │   └── uno_r4_wifi/                   # arduino_secrets.h
 ├── lib/
 │   └── esp_lcd_touch_axs5106l/        # vendored supplier touch driver

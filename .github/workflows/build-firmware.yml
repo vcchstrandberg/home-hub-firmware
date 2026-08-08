@@ -49,7 +49,7 @@ on:
 env:
   # Every OTA-enabled target — see OTA_ENV_NAME in src/main.cpp. uno_r4_wifi
   # is intentionally excluded: different chip family, no OTA support.
-  OTA_ENVS: "esp32s3_waveshare_lcd esp32c6_waveshare_lcd esp32c6_zero_ili9341 esp32c6_zero esp32cam esp32dev"
+  OTA_ENVS: "esp32s3_waveshare_lcd esp32c6_waveshare_lcd esp32c6_zero_ili9341 esp32c6_zero"
 
 jobs:
   build:
@@ -62,8 +62,6 @@ jobs:
           - esp32c6_waveshare_lcd
           - esp32c6_zero_ili9341
           - esp32c6_zero
-          - esp32cam
-          - esp32dev
     steps:
       - uses: actions/checkout@v4
         with:

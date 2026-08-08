@@ -7,8 +7,6 @@
 // WAVESHARE_ESP32S3_LCD  — Waveshare ESP32-S3-LCD-2.8, non-touch (integrated TFT)
 // ESP32C6_ZERO_TFT       — Waveshare ESP32-C6-Zero + external 2.4" ILI9341 SPI TFT
 // ESP32C6_ZERO           — Waveshare ESP32-C6-Zero + external SSD1306 (I2C GPIO6/7)
-// ESP32CAM               — AI-Thinker ESP32-CAM + external SSD1306 (I2C GPIO14/15)
-// ESP32                  — generic ESP32 DevKit + external SSD1306 (I2C GPIO21/22)
 // (neither)              — Arduino Uno R4 WiFi + external SSD1306 (I2C)
 //
 // Devices call the local Raspberry Pi proxy over plain HTTP — no TLS, no OAuth.
@@ -57,20 +55,6 @@
 #  include <Preferences.h>
 #  define BUTTON_PIN 9
 #  define OTA_ENV_NAME "esp32c6_zero"
-#elif defined(ESP32)
-#  include <U8g2lib.h>
-#  include <Wire.h>
-#  include <WiFi.h>
-#  include <HTTPClient.h>
-#  include <ArduinoOTA.h>
-#  include <Update.h>
-#  include <Preferences.h>
-#  define BUTTON_PIN 0
-#  ifdef ESP32CAM
-#    define OTA_ENV_NAME "esp32cam"
-#  else
-#    define OTA_ENV_NAME "esp32dev"
-#  endif
 #else
 #  include <U8g2lib.h>
 #  include <Wire.h>
@@ -357,9 +341,7 @@ void setup()
   // block below (same reasoning as the LVGL boards above).
 
 #elif !defined(NO_DISPLAY)
-#  ifdef ESP32CAM
-  Wire.begin(14, 15);
-#  elif defined(ESP32C6_ZERO)
+#  ifdef ESP32C6_ZERO
   // C6-Zero doesn't break out the variant default I2C pins (23/22),
   // so call Wire.begin() explicitly with broken-out pins (Wire1 defaults).
   Wire.begin(6, 7);
@@ -480,10 +462,9 @@ void setup()
                         updatedAt.c_str(), updateMethod.c_str(), failLine.c_str());
   delay(5000);
 #endif
-  // OLED boards (esp32cam/esp32dev/esp32c6_zero): the failure check already
-  // ran earlier in setup(), before WiFi, and replaces the whole splash
-  // screen there instead of adding a line — no room on a 128x64 panel for
-  // a 5th line.
+  // OLED board (esp32c6_zero): the failure check already ran earlier in
+  // setup(), before WiFi, and replaces the whole splash screen there instead
+  // of adding a line — no room on a 128x64 panel for a 5th line.
 
   // OTA Phase 2 — re-enabled 2026-08-06 after the reboot-loop fix (see the
   // incident note on checkForFirmwareUpdate()): a repeat of the exact same

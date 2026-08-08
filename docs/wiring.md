@@ -6,49 +6,6 @@ The OLED typically has a fixed I2C address of `0x3C`. Power it from the board's 
 
 ---
 
-## AI-Thinker ESP32-CAM
-
-The ESP32-CAM's standard I2C pins (GPIO21/22) are used by the camera interface. The OLED is wired to two repurposed camera pins instead.
-
-| OLED pin | ESP32-CAM pin | GPIO | Notes |
-|---|---|---|---|
-| VCC | 3V3 | — | 3.3 V only |
-| GND | GND | — | |
-| SDA | HREF | GPIO14 | Camera HREF — repurposed for I2C SDA |
-| SCL | PCLK | GPIO15 | Camera PCLK — repurposed for I2C SCL |
-
-`Wire.begin(14, 15)` is called explicitly in firmware to set these non-default pins.
-
-**Locale button:** built-in **BOOT button (GPIO0)** — no external wiring needed. Press to cycle locales.
-
-**Flashing:** The ESP32-CAM has no USB port. You need a USB-to-serial adapter (FTDI / CH340) wired to UART0:
-
-| Adapter | ESP32-CAM |
-|---|---|
-| TX | GPIO3 (U0RXD) |
-| RX | GPIO1 (U0TXD) |
-| GND | GND |
-| 5V | 5V |
-
-To enter bootloader mode: connect **IO0 → GND**, then press RST (or power-cycle). After uploading, disconnect IO0 from GND and press RST to boot normally.
-
----
-
-## ESP32 DevKit
-
-| OLED pin | ESP32 pin | GPIO | Notes |
-|---|---|---|---|
-| VCC | 3V3 | — | 3.3 V only |
-| GND | GND | — | |
-| SDA | D21 | GPIO21 | Hardware I2C default |
-| SCL | D22 | GPIO22 | Hardware I2C default |
-
-`Wire.begin()` is called without arguments — uses the hardware I2C defaults.
-
-**Locale button:** built-in **BOOT button (GPIO0)** — no external wiring needed.
-
----
-
 ## Waveshare ESP32-C6-Zero
 
 The C6-Zero exposes raw ESP32-C6 GPIOs on its 0.1″ headers — silkscreen labels match the GPIO numbers directly. Note: GPIO 22 and 23 (the ESP32-C6 Arduino variant's default I2C pins) are **not** broken out, so the firmware explicitly initialises I2C on GPIO 6/7 instead — the variant's `Wire1` defaults, which Waveshare does break out.
