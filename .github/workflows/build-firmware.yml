@@ -127,12 +127,18 @@ jobs:
 
       - name: Derive version string
         id: ver
-        # Same logic as scripts/version.py: git describe, strip a leading "v".
-        # On a tag push this resolves to the clean tag name (e.g. "2.20");
-        # on a manual workflow_dispatch off a non-tag ref it'll carry a
-        # -N-g<hash> (or -dirty) suffix, same as any other non-release build.
+        # Same command as scripts/version.py (which is what actually stamps
+        # APP_VERSION into each binary in the build job above), so this job's
+        # version.txt can never disagree with what's compiled in — both jobs
+        # check out the same commit (actions/checkout defaults to github.sha
+        # with no ref: override) via a fresh, always-clean clone, so --dirty
+        # is a no-op here today regardless; kept for exact parity rather than
+        # relying on that staying true if a later step reorders things.
+        # Strip a leading "v": on a tag push this resolves to the clean tag
+        # name (e.g. "2.20"); on a manual workflow_dispatch off a non-tag ref
+        # it'll carry a -N-g<hash> suffix, same as any other non-release build.
         run: |
-          DESCRIBE=$(git describe --tags --always)
+          DESCRIBE=$(git describe --tags --always --dirty)
           VERSION=${DESCRIBE#v}
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Publishing firmware version: $VERSION"
