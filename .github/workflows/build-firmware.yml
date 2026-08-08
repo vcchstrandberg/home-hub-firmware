@@ -1,0 +1,172 @@
+name: Build and publish OTA firmware
+
+# Builds every OTA-enabled PlatformIO env and publishes the resulting .bin +
+# version.txt to netatmo-home-hub/server/firmware/<env>/, replacing the
+# manual "pio run, then copy the .bin over by hand" step described in
+# docs/production-readiness.md. The Pi's existing update.sh cron (git pull +
+# restart every 5 min) picks the new binaries up from there — no new deploy
+# mechanism needed.
+#
+# Runs on every vX.Y tag push (the project's existing release convention —
+# see the versioning memory / docs/production-readiness.md), or manually via
+# workflow_dispatch for testing the pipeline itself without cutting a tag.
+#
+# Requires four repo secrets (Settings > Secrets and variables > Actions):
+#   NETATMO_HOME_HUB_TOKEN  A token with contents:write on
+#                           vcchstrandberg/netatmo-home-hub (fine-grained PAT
+#                           scoped to just that repo is enough). Without it,
+#                           the publish job fails at the checkout-server-repo
+#                           step — the build job still runs regardless.
+#   WIFI_SSID, WIFI_PASSWORD, PROXY_HOST
+#                           The real values every board's arduino_secrets.h
+#                           carries locally (identical across all boards —
+#                           only DEVICE_NAME differs, and that's not secret,
+#                           see below). These get compiled directly into the
+#                           published binaries, same as a manual local build
+#                           already does — do NOT use placeholder values here,
+#                           a device that pulls a placeholder-credentialed
+#                           build via OTA loses WiFi permanently until
+#                           someone walks over with a USB cable.
+#
+# netatmo-home-hub MUST stay a private repo: the published .bin files have
+# the WiFi password compiled into their .rodata section in plaintext,
+# trivially recoverable with `strings firmware.bin`. (This bit the project
+# for real on 2026-08-06/07 — binaries built locally with real secrets had
+# already been pushed to that repo while it was still public.)
+#
+# DEVICE_NAME doesn't need a secret: it's the *initial* label shown for a
+# brand-new device on its very first /weather check-in only — every device
+# this workflow could ever push an update to already has a hub-assigned
+# friendly name that persists regardless of what a freshly-flashed binary
+# sends (see _initial_friendly_name in netatmo_proxy.py).
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+env:
+  # Every OTA-enabled target — see OTA_ENV_NAME in src/main.cpp. uno_r4_wifi
+  # is intentionally excluded: different chip family, no OTA support.
+  OTA_ENVS: "esp32s3_waveshare_lcd esp32c6_waveshare_lcd esp32c6_zero_ili9341 esp32c6_zero esp32cam esp32dev"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - esp32s3_waveshare_lcd
+          - esp32c6_waveshare_lcd
+          - esp32c6_zero_ili9341
+          - esp32c6_zero
+          - esp32cam
+          - esp32dev
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history + tags, needed for `git describe` to find the right tag
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ matrix.target }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            pio-${{ matrix.target }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Write arduino_secrets.h from repo secrets
+        # Real config, not the .example placeholders -- see the file header
+        # comment for why. Routed through env: (not inlined into the run:
+        # script via ${{ }}) per GitHub's documented guidance for handling
+        # secrets that might contain shell-special characters, then written
+        # with printf (not an unquoted heredoc) for the same reason.
+        env:
+          WIFI_SSID: ${{ secrets.WIFI_SSID }}
+          WIFI_PASSWORD: ${{ secrets.WIFI_PASSWORD }}
+          PROXY_HOST: ${{ secrets.PROXY_HOST }}
+        run: |
+          {
+            echo '#pragma once'
+            printf '#define SECRET_SSID  "%s"\n' "$WIFI_SSID"
+            printf '#define SECRET_PASS  "%s"\n' "$WIFI_PASSWORD"
+            printf '#define PROXY_HOST   "%s"\n' "$PROXY_HOST"
+            echo '#define PROXY_PORT   8080'
+            printf '#define DEVICE_NAME  "ci-%s"\n' "${{ matrix.target }}"
+          } > "include/${{ matrix.target }}/arduino_secrets.h"
+
+      - name: Build
+        run: pio run -e "${{ matrix.target }}"
+
+      - name: Upload firmware.bin
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.target }}
+          path: .pio/build/${{ matrix.target }}/firmware.bin
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout home-hub-firmware (for git describe)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Derive version string
+        id: ver
+        # Same logic as scripts/version.py: git describe, strip a leading "v".
+        # On a tag push this resolves to the clean tag name (e.g. "2.20");
+        # on a manual workflow_dispatch off a non-tag ref it'll carry a
+        # -N-g<hash> (or -dirty) suffix, same as any other non-release build.
+        run: |
+          DESCRIBE=$(git describe --tags --always)
+          VERSION=${DESCRIBE#v}
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing firmware version: $VERSION"
+
+      - name: Download all built binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Checkout netatmo-home-hub
+        uses: actions/checkout@v4
+        with:
+          repository: vcchstrandberg/netatmo-home-hub
+          token: ${{ secrets.NETATMO_HOME_HUB_TOKEN }}
+          path: netatmo-home-hub
+
+      - name: Copy binaries + write version files
+        run: |
+          for target in $OTA_ENVS; do
+            dest="netatmo-home-hub/server/firmware/$target"
+            mkdir -p "$dest"
+            cp "artifacts/firmware-$target/firmware.bin" "$dest/firmware.bin"
+            printf '%s' "${{ steps.ver.outputs.version }}" > "$dest/version.txt"
+          done
+
+      - name: Commit and push (no-op if nothing changed)
+        working-directory: netatmo-home-hub
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server/firmware/
+          if git diff --staged --quiet; then
+            echo "No firmware changes to publish (binaries identical to what's already there)."
+          else
+            git commit -m "Publish firmware ${{ steps.ver.outputs.version }} (automated)"
+            git push
+          fi
