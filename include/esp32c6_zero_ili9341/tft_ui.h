@@ -16,12 +16,19 @@ void init();
 // Modal boot/status screens (each clears the panel and shows centered text).
 // updatedAt/updateMethod are this board's OTA bookkeeping (see
 // checkForFirmwareUpdate() in main.cpp) — when this firmware was last
-// flashed and whether that was OTA or USB.
+// flashed and whether that was OTA or USB. failureLine is non-null/non-empty
+// only when the last OTA attempt failed (see recordFirmwareUpdateFailure()
+// in main.cpp) — shown as an extra line near the bottom in red; pass "" or
+// nullptr when there's nothing to report.
 void showBootSplash(const char* version, const char* date, const char* commit,
-                    const char* updatedAt, const char* updateMethod);
+                    const char* updatedAt, const char* updateMethod,
+                    const char* failureLine);
 void showConnecting(const char* hint, const char* ssid);
 void showLocale(const char* name, const char* code);
 void showError(const char* title, const char* detail, const char* retrying);
+// Shown while an OTA download/flash is actually in progress (between the
+// lastOffer guard passing and Update.end() returning).
+void showOtaProgress(const char* line1, const char* line2);
 
 // Full weather dashboard — redraws the whole screen with current values.
 // `outdoorLabel` is already resolved by the caller (city name when known,

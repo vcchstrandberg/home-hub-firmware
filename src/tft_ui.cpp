@@ -204,7 +204,8 @@ void init() {
 }
 
 void showBootSplash(const char* version, const char* date, const char* commit,
-                    const char* updatedAt, const char* updateMethod) {
+                    const char* updatedAt, const char* updateMethod,
+                    const char* failureLine) {
   tft.fillScreen(TFT_BLACK);
   centered(70,  2, TFT_YELLOW, "Netatmo");
   centered(98,  2, TFT_YELLOW, "Home Hub");
@@ -216,12 +217,21 @@ void showBootSplash(const char* version, const char* date, const char* commit,
   char upd[48];
   snprintf(upd, sizeof(upd), "Updated %s (%s)", updatedAt ? updatedAt : "?", updateMethod ? updateMethod : "?");
   centered(226, 1, TFT_CYAN, upd);
+  // gH-relative (not a fixed y like the lines above) so this still lands
+  // near the bottom edge regardless of which TFT_ROTATION the board was built with.
+  if (failureLine && *failureLine) centered(gH - 14, 1, TFT_RED, failureLine);
 }
 
 void showConnecting(const char* hint, const char* ssid) {
   tft.fillScreen(TFT_BLACK);
   centered(130, 2, TFT_YELLOW, hint);
   centered(160, 2, TFT_WHITE, ssid);
+}
+
+void showOtaProgress(const char* line1, const char* line2) {
+  tft.fillScreen(TFT_BLACK);
+  centered(130, 2, TFT_YELLOW, line1);
+  centered(160, 2, TFT_WHITE, line2);
 }
 
 void showLocale(const char* name, const char* code) {

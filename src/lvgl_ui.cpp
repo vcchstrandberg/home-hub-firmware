@@ -927,16 +927,24 @@ void LvglUI::setOnSwipe(void (*callback)(int)) {
 }
 
 void LvglUI::showBootSplash(const char* version, const char* date, const char* commit,
-                            const char* updatedAt, const char* updateMethod) {
+                            const char* updatedAt, const char* updateMethod,
+                            const char* failureLine) {
   String t = String("Netatmo Home Hub\nv") + (version ? version : "?") +
              "\n" + (date ? date : "?") + "\n" + (commit ? commit : "?") +
              "\nUpdated " + (updatedAt ? updatedAt : "?") +
              " (" + (updateMethod ? updateMethod : "?") + ")";
-  showModal(t.c_str(), COL_BG);
+  bool failed = failureLine && *failureLine;
+  if (failed) { t += "\n"; t += failureLine; }
+  showModal(t.c_str(), failed ? COL_ERROR_BG : COL_BG);
 }
 
 void LvglUI::showConnecting(const char* hint, const char* ssid) {
   String t = stripAccents(hint) + "\n" + (ssid ? ssid : "?");
+  showModal(t.c_str(), COL_BG);
+}
+
+void LvglUI::showOtaProgress(const char* line1, const char* line2) {
+  String t = String(line1 ? line1 : "") + "\n" + (line2 ? line2 : "");
   showModal(t.c_str(), COL_BG);
 }
 

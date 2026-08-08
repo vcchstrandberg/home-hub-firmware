@@ -287,6 +287,8 @@ void onSwipe(int dir);
 void checkForFirmwareUpdate();
 static void syncTimeFromNtp();
 static void recordFirmwareUpdateInfo(String& outTimestamp, String& outMethod);
+static void recordFirmwareUpdateFailure(const String& ver, const char* reason);
+static bool getPendingFirmwareFailure(String& outVer, String& outReason);
 // NVS ("Preferences") namespace + keys for update bookkeeping. Shared by
 // checkForFirmwareUpdate(), the ArduinoOTA onEnd hook in setup(), and
 // recordFirmwareUpdateInfo().
@@ -301,6 +303,11 @@ static void recordFirmwareUpdateInfo(String& outTimestamp, String& outMethod);
 //   lastOffer    the server-offered version string Phase 2 most recently
 //                attempted, whether or not it actually changed APP_VERSION —
 //                see the incident note in checkForFirmwareUpdate() below
+//   lastFailVer/lastFailReason
+//                set by recordFirmwareUpdateFailure() when an OTA download
+//                got past Update.begin() but didn't finish and verify
+//                cleanly; shown on the next boot splash until a version
+//                change clears it (see recordFirmwareUpdateInfo())
 static const char* FW_PREFS_NS = "fwmeta";
 #endif
 #ifdef ABOUT_SCREEN
@@ -363,10 +370,26 @@ void setup()
   if (oledOk) {
     oled.clearBuffer();
     oled.setFont(u8g2_font_ncenB08_tr);
-    oled.drawStr(0, 12, "Netatmo Home Hub");
-    oled.drawStr(0, 28, "v" APP_VERSION);
-    oled.drawStr(0, 44, __DATE__);
-    oled.drawStr(0, 60, GIT_COMMIT);
+    // A dedicated failure screen replaces the normal splash entirely — no
+    // room on a 128x64 panel for both, and this needs to be impossible to
+    // miss. NVS is readable this early (no WiFi/NTP dependency), so the
+    // check happens before the normal 4-line splash below rather than
+    // after WiFi connects like the LVGL/TFT boards' extra splash line.
+#  ifdef OTA_ENV_NAME
+    String failVer, failReason;
+    if (getPendingFirmwareFailure(failVer, failReason)) {
+      oled.drawStr(0, 12, "OTA update failed");
+      oled.drawStr(0, 28, (String("-> v") + failVer).c_str());
+      oled.drawStr(0, 44, failReason.c_str());
+      oled.drawStr(0, 60, "Connect via USB");
+    } else
+#  endif
+    {
+      oled.drawStr(0, 12, "Netatmo Home Hub");
+      oled.drawStr(0, 28, "v" APP_VERSION);
+      oled.drawStr(0, 44, __DATE__);
+      oled.drawStr(0, 60, GIT_COMMIT);
+    }
     oled.sendBuffer();
     delay(5000);
   } else {
@@ -441,19 +464,26 @@ void setup()
   recordFirmwareUpdateInfo(updatedAt, updateMethod);
   Serial.print("Updated: "); Serial.print(updatedAt); Serial.print(" ("); Serial.print(updateMethod); Serial.println(")");
 
+  String failVer, failReason, failLine;
+  if (getPendingFirmwareFailure(failVer, failReason)) {
+    failLine = String("OTA to v") + failVer + " failed (" + failReason + ") - connect USB";
+    Serial.print("OTA: "); Serial.println(failLine);
+  }
+
 #if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
   LvglUI::showBootSplash(APP_VERSION, __DATE__, GIT_COMMIT,
-                         updatedAt.c_str(), updateMethod.c_str());
+                         updatedAt.c_str(), updateMethod.c_str(), failLine.c_str());
   unsigned long splashUntil = millis() + 5000;
   while (millis() < splashUntil) { LvglUI::tick(); delay(20); }
 #elif defined(ESP32C6_ZERO_TFT)
   TftUI::showBootSplash(APP_VERSION, __DATE__, GIT_COMMIT,
-                        updatedAt.c_str(), updateMethod.c_str());
+                        updatedAt.c_str(), updateMethod.c_str(), failLine.c_str());
   delay(5000);
 #endif
-  // OLED boards (esp32cam/esp32dev/esp32c6_zero): the splash already ran
-  // earlier in setup(), before WiFi — no room on a 128x64 panel for a 5th
-  // line, so the "Updated:" Serial line above is the only place this shows.
+  // OLED boards (esp32cam/esp32dev/esp32c6_zero): the failure check already
+  // ran earlier in setup(), before WiFi, and replaces the whole splash
+  // screen there instead of adding a line — no room on a 128x64 panel for
+  // a 5th line.
 
   // OTA Phase 2 — re-enabled 2026-08-06 after the reboot-loop fix (see the
   // incident note on checkForFirmwareUpdate()): a repeat of the exact same
@@ -628,6 +658,13 @@ void fetchWeatherData()
   http.addHeader("X-Device-Id", WiFi.macAddress());
   // git-describe string (see scripts/version.py) — shown in the hub's device list.
   http.addHeader("X-Device-Firmware", APP_VERSION);
+#ifdef OTA_ENV_NAME
+  // Lets the hub answer "is anything published for *this* board" inline on
+  // every /weather response (see parseWeather()) — the OTA fast-path, so a
+  // new publish is noticed within one fetch cycle instead of waiting for the
+  // boot-time/24h check.
+  http.addHeader("X-Device-Env", OTA_ENV_NAME);
+#endif
   int code = http.GET();
   if (code != 200) {
     Serial.printf("Proxy HTTP %d\n", code);
@@ -723,6 +760,22 @@ void parseWeather(const String& json)
   }
 #endif
 
+#ifdef OTA_ENV_NAME
+  // OTA fast-path: the hub already told us (via X-Device-Env / this same
+  // /weather response) whether something newer than what we're running has
+  // been published, so we don't have to wait for the boot-time/24h check to
+  // find out — noticed within one fetch cycle instead. Before drawCard()
+  // below: if this actually triggers a successful update, the device is
+  // about to reboot, so there's no point repainting the dashboard first.
+  // checkForFirmwareUpdate() re-derives the comparison itself (one extra
+  // small GET) rather than trusting this field blindly, and its own
+  // lastOffer guard still applies — this is just a trigger, not a bypass.
+  const char* latestFw = doc["latest_firmware"];
+  if (latestFw && *latestFw && String(latestFw) != APP_VERSION) {
+    checkForFirmwareUpdate();
+  }
+#endif
+
   Serial.print("City: "); Serial.println(g_city);
   Serial.print("In: ");   Serial.print(g_indoorTemp);  Serial.print("  Out: "); Serial.println(g_outdoorTemp);
 #ifdef ABOUT_SCREEN
@@ -779,6 +832,12 @@ static void recordFirmwareUpdateInfo(String& outTimestamp, String& outMethod) {
     prefs.putString("ver", APP_VERSION);
     prefs.putULong("ts", ts);
     prefs.putString("method", wasOta ? "OTA" : "USB");
+
+    // Any previously-recorded failure is now moot: we're running different
+    // code than when it happened, whether that's because the retried OTA
+    // finally succeeded or because someone fixed it over USB.
+    if (prefs.isKey("lastFailVer")) prefs.remove("lastFailVer");
+    if (prefs.isKey("lastFailReason")) prefs.remove("lastFailReason");
   }
 
   unsigned long storedTs = prefs.getULong("ts", 0);
@@ -794,6 +853,36 @@ static void recordFirmwareUpdateInfo(String& outTimestamp, String& outMethod) {
     strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", lt);
     outTimestamp = String(buf) + " UTC";
   }
+}
+
+// Persists a real OTA failure: a download that got past Update.begin() but
+// didn't finish and verify cleanly (see the call sites in
+// checkForFirmwareUpdate() for exactly which two cases count — deliberately
+// narrower than "any failure", so a transient network blip that never got
+// this far doesn't trigger a USB-required warning for no reason). Shown on
+// the next boot splash until recordFirmwareUpdateInfo() clears it.
+static void recordFirmwareUpdateFailure(const String& ver, const char* reason) {
+  Preferences prefs;
+  prefs.begin(FW_PREFS_NS, false);
+  prefs.putString("lastFailVer", ver);
+  prefs.putString("lastFailReason", reason);
+  prefs.end();
+  Serial.print("OTA: recorded failed update attempt to "); Serial.print(ver);
+  Serial.print(" ("); Serial.print(reason); Serial.println(")");
+}
+
+// Fills outVer/outReason and returns true if a failed OTA attempt is on
+// record (see recordFirmwareUpdateFailure()); returns false if none.
+static bool getPendingFirmwareFailure(String& outVer, String& outReason) {
+  Preferences prefs;
+  prefs.begin(FW_PREFS_NS, true);
+  bool has = prefs.isKey("lastFailVer");
+  if (has) {
+    outVer = prefs.getString("lastFailVer", "");
+    outReason = prefs.getString("lastFailReason", "");
+  }
+  prefs.end();
+  return has;
 }
 
 // ── checkForFirmwareUpdate() ────────────────────────────────────────────────
@@ -847,6 +936,23 @@ void checkForFirmwareUpdate()
 
   Serial.print("OTA: "); Serial.print(APP_VERSION); Serial.print(" -> "); Serial.println(serverVersion);
 
+  // From here on a real update attempt is underway — worth interrupting
+  // whatever's on screen to say so (this function doesn't return until
+  // either the reboot at the bottom or one of the failure returns below).
+  String progressLine2 = String("v") + serverVersion;
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
+  LvglUI::showOtaProgress("Installing update", progressLine2.c_str());
+  LvglUI::tick();
+#elif defined(ESP32C6_ZERO_TFT)
+  TftUI::showOtaProgress("Installing update", progressLine2.c_str());
+#elif !defined(NO_DISPLAY)
+  oled.clearBuffer();
+  oled.setFont(u8g2_font_ncenB08_tr);
+  oled.drawStr(0, 28, "Installing update");
+  oled.drawStr(0, 44, progressLine2.c_str());
+  oled.sendBuffer();
+#endif
+
   HTTPClient binHttp;
   binHttp.begin(base + "/bin");
   binHttp.setTimeout(30000);
@@ -873,11 +979,13 @@ void checkForFirmwareUpdate()
   binHttp.end();
   if (written != (size_t)len) {
     Serial.print("OTA: wrote "); Serial.print(written); Serial.print("/"); Serial.println(len);
+    recordFirmwareUpdateFailure(serverVersion, "incomplete transfer");
     Update.abort();
     return;
   }
   if (!Update.end() || !Update.isFinished()) {
     Serial.print("OTA: Update.end failed: "); Serial.println(Update.errorString());
+    recordFirmwareUpdateFailure(serverVersion, "verify failed");
     return;
   }
 

@@ -40,11 +40,19 @@ void setBacklight(uint8_t percent);
 // Modal overlays (hide the dashboard while shown). updatedAt/updateMethod are
 // this board's OTA bookkeeping (see checkForFirmwareUpdate() in main.cpp) —
 // when this firmware was last flashed and whether that was OTA or USB.
+// failureLine is non-null/non-empty only when the last OTA attempt failed
+// (see recordFirmwareUpdateFailure() in main.cpp) — shown as an extra line
+// in a warning color; pass "" or nullptr when there's nothing to report.
 void showBootSplash(const char* version, const char* date, const char* commit,
-                    const char* updatedAt, const char* updateMethod);
+                    const char* updatedAt, const char* updateMethod,
+                    const char* failureLine);
 void showConnecting(const char* hint, const char* ssid);
 void showLocale(const char* name, const char* code);
 void showError(const char* title, const char* detail, const char* retrying);
+// Shown while an OTA download/flash is actually in progress (between the
+// lastOffer guard passing and Update.end() returning) — main.cpp holds this
+// up for the duration of checkForFirmwareUpdate() itself, no separate timer.
+void showOtaProgress(const char* line1, const char* line2);
 
 // Update individual dashboard regions; hides the modal as a side effect.
 void setIndoor(const char* label, const char* humidityLabel,
