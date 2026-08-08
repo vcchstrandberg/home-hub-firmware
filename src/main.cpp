@@ -330,6 +330,23 @@ void setup()
   // C6 board, or directly for the IMU on the S3 board) — the QMI8658 shares
   // that I2C bus, so we can init it here without a second Wire.begin().
   Orientation::init();
+  // setOrientation() otherwise only ever gets called from loop()'s periodic
+  // poll further down — which doesn't run until after WiFi connects and the
+  // 5s boot splash finishes. Without this, showConnecting()/showBootSplash()
+  // below always render in LvglUI::init()'s hardcoded landscape default,
+  // regardless of how the device is actually being held. Orientation::poll()
+  // needs two consistent reads DEBOUNCE_MS (600ms) apart to commit, so poll
+  // a few times up front instead of just once; if the device is lying flat
+  // (or the IMU never settles in time) this just times out and the
+  // hardcoded default stands, same as before this fix.
+  for (uint8_t i = 0; i < 20; i++) {
+    int8_t rot = Orientation::poll();
+    if (rot != Orientation::UNCHANGED) {
+      LvglUI::setOrientation((uint8_t)rot);
+      break;
+    }
+    delay(100);
+  }
   // The boot splash (both LVGL boards) is shown later, after WiFi connects —
   // it now includes the last-update timestamp/method, which need NTP/NVS
   // that aren't available yet at this point in boot. See the OTA_ENV_NAME
