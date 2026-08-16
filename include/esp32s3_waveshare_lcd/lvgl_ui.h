@@ -1,12 +1,12 @@
 // LVGL UI for the Waveshare ESP32-S3-LCD-2.8 target (non-touch variant).
 // Public API used by main.cpp. Implementation in src/lvgl_ui_s3.cpp.
 //
-// Unlike the ESP32-C6 Touch LCD 1.47 sibling, this board has no input that
-// makes a multi-page carousel practical (no touch, and the extra physical
-// button turned out not to be a good fit for it either) — so there is no
-// paging here at all. Everything (current conditions + tomorrow's forecast)
-// is laid out on one always-visible screen, using the extra room this
-// panel's 240x320 gives over the C6's 172x320. There is also no About page.
+// Unlike the ESP32-C6 Touch LCD 1.47 sibling, this board has no touch — but
+// since 2026-08-16 an external KY-040 rotary encoder (wired to the board's
+// spare header pins) drives the same kind of page carousel the C6 gets from
+// swiping: four full-screen pages (Inside / Outside+Rain / Weather forecast /
+// About+QR), rotation cycles pages, the encoder's built-in push button
+// cycles locale. See main.cpp's HAS_ENCODER block for the input handling.
 
 #pragma once
 #ifdef WAVESHARE_ESP32S3_LCD
@@ -36,6 +36,16 @@ void tick();
 // Set display backlight brightness, 0-100 %. Driven by LEDC PWM on the BL pin.
 // The hub computes the level (time-of-day dimming) and sends it in /weather.
 void setBacklight(uint8_t percent);
+
+// Show page 0..3 (Inside / Outside / Weather / About). Updates the
+// page-indicator dots. The pages share the screen; only one is visible at
+// a time. Driven by the rotary encoder in main.cpp — see onSwipe() there.
+void showPage(uint8_t page);
+
+// Populate the About page (static info; call once after init). url is
+// encoded as the QR code.
+void setAbout(const char* name, const char* version, const char* commit,
+              const char* date, const char* url);
 
 // Modal overlays (hide the dashboard while shown). updatedAt/updateMethod are
 // this board's OTA bookkeeping (see checkForFirmwareUpdate() in main.cpp) —

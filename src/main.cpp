@@ -36,6 +36,18 @@
 #  include <Preferences.h>  // NVS-backed update bookkeeping (timestamp/method/retry-guard)
 #  define BUTTON_PIN 0   // BOOT button — same short-press-cycles-locale role as GPIO9 on the C6 board
 #  define OTA_ENV_NAME "esp32s3_waveshare_lcd"
+// External KY-040 rotary encoder (2026-08-16), wired to the only three GPIOs
+// this board's 12-pin header actually breaks out for general use: the two
+// pins Waveshare's own docs label "Spare GPIO pin" (18, 15) plus TXD/GPIO43
+// — safe to repurpose because ARDUINO_USB_CDC_ON_BOOT=1 below already routes
+// Serial over native USB (GPIO19/20), so UART0 (43/44) carries no firmware
+// traffic. Rotation cycles the four LvglUI pages (Inside/Outside/Weather/
+// About); the encoder's own push button cycles locale — same action as the
+// BOOT button above, kept working independently as a fallback.
+#  define ENCODER_CLK 18
+#  define ENCODER_DT  15
+#  define ENCODER_SW  43
+#  define HAS_ENCODER 1
 #elif defined(ESP32C6_ZERO_TFT)
 #  include "tft_ui.h"
 #  include <WiFi.h>
@@ -219,11 +231,17 @@ float  g_fcTempMax      = 0;
 float  g_fcTempMin      = 0;
 float  g_fcPrecip       = 0;   // mm
 String g_fcSymbol       = "";  // raw met.no symbol_code
-#ifdef WAVESHARE_ESP32C6_LCD
+#if defined(WAVESHARE_ESP32C6_LCD)
 static const uint8_t PAGE_COUNT = 3;  // dashboard, forecast, about
-uint8_t g_page          = 0;   // 0 = dashboard, 1 = forecast, 2 = about
-unsigned long g_lastSwipe = 0; // millis() of the last swipe (page change)
-const unsigned long PAGE_TIMEOUT_MS = 30000;  // auto-return to dashboard after this
+#elif defined(WAVESHARE_ESP32S3_LCD)
+static const uint8_t PAGE_COUNT = 4;  // inside, outside, weather, about
+#endif
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
+// C6: 0=dashboard 1=forecast 2=about, cycled by touch swipe.
+// S3: 0=inside 1=outside 2=weather 3=about, cycled by the rotary encoder.
+uint8_t g_page          = 0;
+unsigned long g_lastSwipe = 0; // millis() of the last page change
+const unsigned long PAGE_TIMEOUT_MS = 30000;  // auto-return to page 0 after this
 #endif
 #ifdef ABOUT_SCREEN
 bool          g_aboutMode  = false;  // long-press button shows the About screen
@@ -264,7 +282,7 @@ void cycleLocale();
 #if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
 void renderForecast();
 #endif
-#ifdef WAVESHARE_ESP32C6_LCD
+#if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
 void onSwipe(int dir);
 #endif
 #ifdef OTA_ENV_NAME
@@ -299,6 +317,30 @@ void drawAbout();
 void toggleAbout();
 #endif
 
+#ifdef HAS_ENCODER
+// ── Rotary encoder (KY-040) quadrature decode ───────────────────────────────
+// Full 4x-resolution state-machine decode, read from an ISR on both CLK and
+// DT so no transition is missed regardless of loop()'s ~100 ms cadence.
+// ENCODER_STATE_TABLE is indexed by (prevState << 2 | currState) where each
+// state is (CLK<<1 | DT); it yields -1/0/+1 per valid quarter-step, and a
+// KY-040 detent is 4 quarter-steps. g_encAccum collects raw quarter-steps;
+// loop() consumes whole detents from it and clears the remainder.
+static const int8_t ENCODER_STATE_TABLE[16] = {
+   0, -1,  1,  0,
+   1,  0,  0, -1,
+  -1,  0,  0,  1,
+   0,  1, -1,  0,
+};
+static volatile uint8_t g_encState = 0;
+static volatile int16_t g_encAccum = 0;
+
+void IRAM_ATTR encoderISR() {
+  uint8_t curr = (digitalRead(ENCODER_CLK) << 1) | digitalRead(ENCODER_DT);
+  g_encState = ((g_encState << 2) | curr) & 0x0F;
+  g_encAccum += ENCODER_STATE_TABLE[g_encState];
+}
+#endif
+
 // ── setup() ───────────────────────────────────────────────────────────────────
 void setup()
 {
@@ -316,15 +358,14 @@ void setup()
 
 #if defined(WAVESHARE_ESP32C6_LCD) || defined(WAVESHARE_ESP32S3_LCD)
   LvglUI::init();
-#ifdef WAVESHARE_ESP32C6_LCD
-  // Swipe left/right cycles the three pages; touch long-press cycles the
-  // locale. The S3 board has neither touch nor paging — it relies solely on
-  // the generic BUTTON_PIN short-press handling below for locale cycling,
-  // and shows current conditions + forecast on one always-visible screen.
-  LvglUI::setOnSwipe(onSwipe);
-  LvglUI::setOnLongPress(cycleLocale);
   LvglUI::setAbout("Netatmo Home Hub", APP_VERSION, GIT_COMMIT, __DATE__,
                    "https://github.com/vcchstrandberg/home-hub-firmware");
+#ifdef WAVESHARE_ESP32C6_LCD
+  // Swipe left/right cycles the three pages; touch long-press cycles the
+  // locale. The S3 board has no touch — see the HAS_ENCODER block below for
+  // its rotary-encoder equivalent (rotate = page, push = locale).
+  LvglUI::setOnSwipe(onSwipe);
+  LvglUI::setOnLongPress(cycleLocale);
 #endif
   // Wire is already begun by LvglUI::init() (for the touch controller on the
   // C6 board, or directly for the IMU on the S3 board) — the QMI8658 shares
@@ -397,6 +438,13 @@ void setup()
 #endif
 
   pinMode(BUTTON_PIN, INPUT_PULLUP);
+#ifdef HAS_ENCODER
+  pinMode(ENCODER_CLK, INPUT_PULLUP);
+  pinMode(ENCODER_DT,  INPUT_PULLUP);
+  pinMode(ENCODER_SW,  INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_CLK), encoderISR, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_DT),  encoderISR, CHANGE);
+#endif
 
 #ifndef ESP32
   if (WiFi.status() == WL_NO_MODULE) { Serial.println("WiFi module not found!"); while (true) ; }
@@ -567,6 +615,33 @@ void loop()
     if (!btnLongFired && now - btnStart >= 40) cycleLocale();
   }
 
+#ifdef HAS_ENCODER
+  // Encoder push button: short press cycles locale, independent debounce
+  // from the BOOT button above so both keep working on their own.
+  static bool          encBtnDown  = false;
+  static unsigned long encBtnStart = 0;
+  bool encBtnPressed = (digitalRead(ENCODER_SW) == LOW);
+  if (encBtnPressed && !encBtnDown) { encBtnDown = true; encBtnStart = now; }
+  if (!encBtnPressed && encBtnDown) {
+    encBtnDown = false;
+    if (now - encBtnStart >= 40) cycleLocale();
+  }
+
+  // Encoder rotation: g_encAccum is written from an ISR in raw quarter-steps
+  // (see encoderISR() above) — read-and-clear it with interrupts briefly
+  // disabled to avoid tearing, then consume whole detents (4 quarter-steps
+  // each) via onSwipe(), same page-cycling function the C6 board's touch
+  // swipe uses. Sign convention (which rotation direction is "next" page) is
+  // a best guess, unverified on real hardware — swap the two onSwipe() calls
+  // below if it turns out backwards.
+  noInterrupts();
+  int16_t encDelta = g_encAccum;
+  g_encAccum = 0;
+  interrupts();
+  while (encDelta >= 4)  { onSwipe(-1); encDelta -= 4; }
+  while (encDelta <= -4) { onSwipe(1);  encDelta += 4; }
+#endif
+
 #ifdef HAS_LED_MATRIX
   // Keep the onboard smiley in sync with WiFi state (only redraw on change).
   static bool lastConnected = true;  // setup() set happy after connecting
@@ -591,23 +666,18 @@ void loop()
       LvglUI::setOrientation((uint8_t)rot);
       if (g_hasData) drawCard(g_card);
       // The rebuild recreated the widget tree fresh — repopulate the forecast
-      // (and, on the C6 board, restore whichever page was showing before the
-      // flip; the S3 board has no pages to restore).
+      // and restore whichever page was showing before the flip.
       renderForecast();
-#ifdef WAVESHARE_ESP32C6_LCD
       LvglUI::showPage(g_page);
-#endif
     }
   }
 
-#ifdef WAVESHARE_ESP32C6_LCD
-  // Auto-return to the dashboard after inactivity: if we're on the forecast or
-  // about page and there's been no swipe for a while, snap back to page 0.
+  // Auto-return to page 0 after inactivity: if we've navigated away and
+  // there's been no swipe/encoder turn for a while, snap back.
   if (g_page != 0 && now - g_lastSwipe >= PAGE_TIMEOUT_MS) {
     g_page = 0;
     LvglUI::showPage(0);
   }
-#endif
 #endif
 
   bool aboutShown = false;
@@ -1053,8 +1123,9 @@ void renderForecast()
                       g_loc->rain_unit, g_loc->forecast_na);
 }
 
-#ifdef WAVESHARE_ESP32C6_LCD
-// Swipe handler: cycle the pages. dir -1 = swipe left (next), +1 = right (prev).
+// Page-cycle handler: C6 touch swipe and S3 encoder rotation both call this.
+// dir -1 = next page (swipe left / encoder one way), +1 = previous (swipe
+// right / encoder the other way).
 void onSwipe(int dir)
 {
   if (dir < 0) g_page = (g_page + 1) % PAGE_COUNT;
@@ -1062,7 +1133,6 @@ void onSwipe(int dir)
   g_lastSwipe = millis();
   LvglUI::showPage(g_page);
 }
-#endif
 
 #elif defined(ESP32C6_ZERO_TFT)
 

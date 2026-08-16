@@ -65,10 +65,10 @@ flowchart TD
 |---|---|---|
 | ESP32-C6-Zero | 5 s | 5 min |
 | Uno R4 WiFi | 5 s | 60 s |
-| Waveshare ESP32-C6 Touch LCD | Never — full dashboard | 5 min |
-| Waveshare ESP32-S3-LCD-2.8 | Never — full dashboard | 5 min |
+| Waveshare ESP32-C6 Touch LCD | Never — swipe-paged | 5 min |
+| Waveshare ESP32-S3-LCD-2.8 | Never — encoder-paged | 5 min |
 
-The Uno R4 fetches more frequently because its WiFi module (ESP32-S3 co-processor) keeps the connection open; the ESP32 boards use the same always-on polling approach at a slower rate to reduce Netatmo API load. Both Waveshare LVGL boards show their full dashboard at once, so neither rotates cards.
+The Uno R4 fetches more frequently because its WiFi module (ESP32-S3 co-processor) keeps the connection open; the ESP32 boards use the same always-on polling approach at a slower rate to reduce Netatmo API load. Neither Waveshare LVGL board auto-rotates cards on a timer — both use a manual page carousel instead (touch swipe on the C6, a rotary encoder on the S3).
 
 ---
 
@@ -133,8 +133,10 @@ flowchart TB
         xtensas3["ESP32-S3 — Xtensa LX7, 240 MHz\n802.11 b/g/n · BOOT on GPIO0"]
         tft3["Stock ST7789 TFT, 240×320 px\n(landscape 320×240) · SPI\nBacklight PWM on GPIO5 (time-of-day dimming)"]
         imu3["QMI8658 IMU only — no touch controller\nmounted rotated 90° vs. the C6 board"]
+        enc3["External KY-040 rotary encoder\nCLK=18 DT=15 SW=43 (page nav + locale)"]
         xtensas3 --- tft3
         xtensas3 --- imu3
+        xtensas3 --- enc3
     end
 
     oled["SSD1306 OLED\n128×64 px · I2C"]

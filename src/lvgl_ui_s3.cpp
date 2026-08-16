@@ -6,11 +6,14 @@
 //   - Stock ST7789 panel (240x320, no col/row offset) vs. the C6's JD9853
 //     variant — Arduino_GFX's built-in ST7789 init is used as-is, no custom
 //     register sequence needed.
-//   - No touch controller, and no other input source turned out to be a good
-//     fit for a swipe substitute — so there is no paging at all here. A
-//     single always-visible 2x2 grid shows current conditions (indoor,
-//     outdoor, rain) AND tomorrow's forecast simultaneously, using the extra
-//     room this 240x320 panel has over the C6's 172x320. No About page.
+//   - No touch controller. Until 2026-08-16 that meant no paging at all (no
+//     input made a swipe substitute practical) — a single always-visible 2x2
+//     grid showed everything at once. An external KY-040 rotary encoder
+//     (main.cpp's HAS_ENCODER block) changed that: rotation now drives a
+//     four-page carousel — Inside, Outside (temp/pressure + rain), Weather
+//     (tomorrow's forecast), About (splash + QR) — one full screen each,
+//     mirroring the C6's swipe-driven carousel but with one extra page since
+//     rain isn't a fifth always-on card here.
 //   - Layout geometry is computed from the panel's actual width/height
 //     instead of hardcoded for one fixed resolution.
 
@@ -100,14 +103,20 @@ static String stripAccents(const char* src) {
 
 // ─── Widget pointers ──────────────────────────────────────────────────────
 struct {
-  // Dashboard (indoor, outdoor, rain, forecast — all four visible at once)
-  lv_obj_t* indoor_card;
+  // Pages (full-screen containers; one visible at a time) + indicator dots.
+  lv_obj_t* page_inside;
+  lv_obj_t* page_outside;
+  lv_obj_t* page_weather;
+  lv_obj_t* page_about;
+  lv_obj_t* dots[4];
+
+  // Inside page
   lv_obj_t* indoor_name;       // "INNE"
   lv_obj_t* indoor_temp;       // big number, e.g. "24.6"
   lv_obj_t* indoor_unit;       // "C"
   lv_obj_t* indoor_humidity;   // "Fukt: 41%"
 
-  lv_obj_t* outdoor_card;
+  // Outside page: temp/pressure card on top, rain card below
   lv_obj_t* outdoor_name;
   lv_obj_t* outdoor_temp;
   lv_obj_t* outdoor_unit;
@@ -120,7 +129,7 @@ struct {
   lv_obj_t* rain_24h;
   lv_obj_t* rain_droplet;      // small white dot, hidden when not raining
 
-  lv_obj_t* fc_card;
+  // Weather (forecast) page
   lv_obj_t* fc_title;          // "TOMORROW"
   lv_obj_t* fc_icon;           // container the weather icon is drawn into
   lv_obj_t* fc_hi;             // big high temp (amber)
@@ -129,10 +138,26 @@ struct {
   lv_obj_t* fc_unit;           // "C" / "F"
   lv_obj_t* fc_precip;         // "REGN: 0.4 mm"
 
+  // About page
+  lv_obj_t* about_name;        // "Netatmo Home Hub"
+  lv_obj_t* about_version;     // "v2.24"
+  lv_obj_t* about_build;       // "abc1234  Aug 16 2026"
+  lv_obj_t* about_qr;          // QR code to the repo
+
   // Modal overlay
   lv_obj_t* modal;
   lv_obj_t* modal_label;
 } ui;
+
+// ─── Paging state ──────────────────────────────────────────────────────────
+static const uint8_t PAGE_COUNT = 4;   // Inside, Outside, Weather, About
+static const int     DOT_BAND   = 14;  // reserved strip at the bottom for the dots
+static uint8_t       s_page     = 0;   // 0=Inside 1=Outside 2=Weather 3=About
+
+static String s_abtName    = "Netatmo Home Hub";
+static String s_abtVersion = "?";
+static String s_abtBuild   = "";
+static String s_abtUrl     = "https://github.com/vcchstrandberg/home-hub-firmware";
 
 // ─── UI construction ──────────────────────────────────────────────────────
 static void styleContainer(lv_obj_t* obj, uint32_t bgColor, uint32_t borderColor, lv_coord_t border, lv_coord_t radius, lv_coord_t pad) {
@@ -454,35 +479,72 @@ static void createModal(lv_obj_t* parent, int w, int h) {
   lv_obj_add_flag(ui.modal, LV_OBJ_FLAG_HIDDEN);
 }
 
-// ─── Dashboard: one always-visible 2x2 grid ───────────────────────────────
-// indoor | outdoor
-// rain   | forecast
-// No paging (this board has no input that makes a swipe substitute
-// practical), so everything current-conditions-plus-forecast lives on
-// screen at once. The grid is symmetric in W/H, so the same builder works
-// for both landscape (320x240) and portrait (240x320).
-static void buildDashboard() {
-  resetScreen();
-  lv_obj_t* scr = lv_scr_act();
+// ─── Paging chrome ─────────────────────────────────────────────────────────
+// Full-screen page container: solid background, no border/padding.
+static lv_obj_t* makePage(lv_obj_t* scr, int w, int h) {
+  lv_obj_t* pg = lv_obj_create(scr);
+  lv_obj_set_size(pg, w, h);
+  lv_obj_set_pos(pg, 0, 0);
+  styleContainer(pg, COL_BG, 0, 0, 0, 0);
+  return pg;
+}
 
-  const int W = s_gfx->width();
-  const int H = s_gfx->height();
-  const int M = 2;   // outer margin
-  const int G = 2;   // gap between cells
-  const int cellW = (W - 2 * M - G) / 2;
-  const int cellH = (H - 2 * M - G) / 2;
+// Four page-indicator dots in the reserved bottom band, drawn on top of the
+// pages. The active page's dot is white; the others muted.
+static void buildDots(lv_obj_t* scr) {
+  for (int i = 0; i < PAGE_COUNT; i++) {
+    ui.dots[i] = lv_obj_create(scr);
+    lv_obj_set_size(ui.dots[i], 7, 7);
+    lv_obj_set_style_bg_opa(ui.dots[i], LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(ui.dots[i], 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(ui.dots[i], LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(ui.dots[i], 0, LV_PART_MAIN);
+    lv_obj_clear_flag(ui.dots[i], LV_OBJ_FLAG_SCROLLABLE);
+    int offset = (int)((i - (PAGE_COUNT - 1) / 2.0f) * 12);
+    lv_obj_align(ui.dots[i], LV_ALIGN_BOTTOM_MID, offset, -4);
+  }
+}
 
-  createTempCard(scr, M, M, cellW, cellH, COL_INDOOR_ACC, "INNE",
-                 &ui.indoor_name,  &ui.indoor_temp,  &ui.indoor_unit,  &ui.indoor_humidity);
-  lv_obj_t* outdoor = createTempCard(scr, M + cellW + G, M, cellW, cellH, COL_OUTDOOR_ACC, "UTE",
+// Apply s_page: show the active page, hide the others, recolor the dots. Safe
+// to call after a rebuild to restore the previously-selected page.
+static void applyPage() {
+  lv_obj_t* pages[PAGE_COUNT] = { ui.page_inside, ui.page_outside, ui.page_weather, ui.page_about };
+  for (int i = 0; i < PAGE_COUNT; i++) {
+    if (!pages[i]) continue;
+    if (i == s_page) lv_obj_clear_flag(pages[i], LV_OBJ_FLAG_HIDDEN);
+    else             lv_obj_add_flag(pages[i], LV_OBJ_FLAG_HIDDEN);
+  }
+  for (int i = 0; i < PAGE_COUNT; i++) {
+    if (ui.dots[i]) lv_obj_set_style_bg_color(ui.dots[i],
+        lv_color_hex(i == s_page ? 0xFFFFFF : COL_MUTED), LV_PART_MAIN);
+  }
+}
+
+// ─── Page 0: Inside — one big indoor card filling the screen ─────────────
+static void buildInsidePage(lv_obj_t* pg, int w, int h) {
+  lv_obj_set_style_pad_bottom(pg, DOT_BAND, LV_PART_MAIN);
+  createTempCard(pg, 4, 4, w - 8, h - 8 - DOT_BAND, COL_INDOOR_ACC, "INNE",
+                 &ui.indoor_name, &ui.indoor_temp, &ui.indoor_unit, &ui.indoor_humidity);
+}
+
+// ─── Page 1: Outside — temp/pressure card + rain card, stacked ───────────
+// Rain doesn't get its own page (only three content pages were wanted
+// alongside About), so it lives here since it's an outdoor condition too.
+static void buildOutsidePage(lv_obj_t* pg, int w, int h) {
+  lv_obj_set_style_pad_bottom(pg, DOT_BAND, LV_PART_MAIN);
+  const int gap   = 4;
+  const int avail = h - DOT_BAND - 8;
+  const int topH  = avail * 55 / 100;   // outdoor gets a bit more (temp+pressure+sun)
+  const int botH  = avail - gap - topH;
+
+  lv_obj_t* outdoor = createTempCard(pg, 4, 4, w - 8, topH, COL_OUTDOOR_ACC, "UTE",
                  &ui.outdoor_name, &ui.outdoor_temp, &ui.outdoor_unit, &ui.outdoor_pressure);
   ui.outdoor_sun = createSun(outdoor);
   lv_obj_align(ui.outdoor_sun, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
 
-  // Rain card, bottom-left.
-  ui.rain_row = lv_obj_create(scr);
-  lv_obj_set_size(ui.rain_row, cellW, cellH);
-  lv_obj_set_pos(ui.rain_row, M, M + cellH + G);
+  ui.rain_row = lv_obj_create(pg);
+  lv_obj_set_size(ui.rain_row, w - 8, botH);
+  lv_obj_set_pos(ui.rain_row, 4, 4 + topH + gap);
   styleContainer(ui.rain_row, COL_CARD_BG, COL_RAIN_BG, 1, 5, 6);
 
   ui.rain_label = lv_label_create(ui.rain_row);
@@ -508,15 +570,78 @@ static void buildDashboard() {
   lv_obj_set_style_text_color(ui.rain_24h, lv_color_white(), 0);
   lv_obj_set_style_text_font(ui.rain_24h, &lv_font_montserrat_24, 0);
   lv_obj_align(ui.rain_24h, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+}
 
-  // Forecast card, bottom-right — same card styling as the others.
-  ui.fc_card = lv_obj_create(scr);
-  lv_obj_set_size(ui.fc_card, cellW, cellH);
-  lv_obj_set_pos(ui.fc_card, M + cellW + G, M + cellH + G);
-  styleContainer(ui.fc_card, COL_CARD_BG, COL_MUTED, 1, 5, 6);
-  buildForecastCard(ui.fc_card);
+// ─── Page 2: Weather — tomorrow's forecast, full screen ──────────────────
+static void buildWeatherPage(lv_obj_t* pg) {
+  lv_obj_set_style_pad_bottom(pg, DOT_BAND, LV_PART_MAIN);
+  buildForecastCard(pg);
+}
 
+// ─── Page 3: About — name/version/build + QR code to the repo ────────────
+static void buildAboutPage(lv_obj_t* pg) {
+  lv_obj_set_flex_flow(pg, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(pg, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_row(pg, 6, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(pg, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_bottom(pg, DOT_BAND, LV_PART_MAIN);
+
+  ui.about_name = lv_label_create(pg);
+  lv_label_set_text(ui.about_name, s_abtName.c_str());
+  lv_obj_set_style_text_color(ui.about_name, lv_color_hex(COL_OUTDOOR_ACC), 0);
+  lv_obj_set_style_text_font(ui.about_name, &lv_font_montserrat_14, 0);
+
+  ui.about_version = lv_label_create(pg);
+  lv_label_set_text(ui.about_version, (String("v") + s_abtVersion).c_str());
+  lv_obj_set_style_text_color(ui.about_version, lv_color_white(), 0);
+  lv_obj_set_style_text_font(ui.about_version, &lv_font_montserrat_14, 0);
+
+  ui.about_build = lv_label_create(pg);
+  lv_label_set_text(ui.about_build, s_abtBuild.c_str());
+  lv_obj_set_style_text_color(ui.about_build, lv_color_hex(COL_MUTED), 0);
+  lv_obj_set_style_text_font(ui.about_build, &lv_font_montserrat_12, 0);
+
+  // White padded box gives the QR a quiet zone so scanners lock on reliably.
+  // Slightly larger than the C6 sibling's since this panel has more room.
+  lv_obj_t* qbox = lv_obj_create(pg);
+  lv_obj_set_size(qbox, 96, 96);
+  lv_obj_set_style_bg_color(qbox, lv_color_white(), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(qbox, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_width(qbox, 0, LV_PART_MAIN);
+  lv_obj_set_style_radius(qbox, 4, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(qbox, 5, LV_PART_MAIN);
+  lv_obj_clear_flag(qbox, LV_OBJ_FLAG_SCROLLABLE);
+
+  ui.about_qr = lv_qrcode_create(qbox, 86, lv_color_black(), lv_color_white());
+  lv_obj_center(ui.about_qr);
+  lv_qrcode_update(ui.about_qr, s_abtUrl.c_str(), s_abtUrl.length());
+}
+
+// ─── Build all four pages ──────────────────────────────────────────────────
+// The grid is symmetric in W/H, so the same builder works for both landscape
+// (320x240) and portrait (240x320).
+static void buildPages() {
+  resetScreen();
+  lv_obj_t* scr = lv_scr_act();
+
+  const int W = s_gfx->width();
+  const int H = s_gfx->height();
+
+  ui.page_inside = makePage(scr, W, H);
+  buildInsidePage(ui.page_inside, W, H);
+
+  ui.page_outside = makePage(scr, W, H);
+  buildOutsidePage(ui.page_outside, W, H);
+
+  ui.page_weather = makePage(scr, W, H);
+  buildWeatherPage(ui.page_weather);
+
+  ui.page_about = makePage(scr, W, H);
+  buildAboutPage(ui.page_about);
+
+  buildDots(scr);
   createModal(scr, W, H);
+  applyPage();
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────
@@ -572,7 +697,7 @@ void LvglUI::init() {
   Wire.begin(I2C_SDA, I2C_SCL);
 
   s_rotation = 1;
-  buildDashboard();
+  buildPages();
 }
 
 void LvglUI::setBacklight(uint8_t percent) {
@@ -594,7 +719,7 @@ void LvglUI::setOrientation(uint8_t rotation) {
     s_disp_drv.hor_res = w;
     s_disp_drv.ver_res = h;
     lv_disp_drv_update(lv_disp_get_default(), &s_disp_drv);
-    buildDashboard();
+    buildPages();
   } else {
     // Same aspect (e.g. 1↔3) — widget tree is reusable; just force a redraw
     // so existing widgets render at the new physical orientation.
@@ -604,6 +729,29 @@ void LvglUI::setOrientation(uint8_t rotation) {
 
 void LvglUI::tick() {
   lv_timer_handler();
+}
+
+void LvglUI::showPage(uint8_t page) {
+  s_page = (page >= PAGE_COUNT) ? (PAGE_COUNT - 1) : page;
+  applyPage();
+}
+
+void LvglUI::setAbout(const char* name, const char* version, const char* commit,
+                      const char* date, const char* url) {
+  if (name && *name)       s_abtName = name;
+  if (version && *version) s_abtVersion = version;
+  if (url && *url)         s_abtUrl = url;
+  s_abtBuild = String(commit ? commit : "") +
+               ((commit && *commit && date && *date) ? "  " : "") +
+               (date ? date : "");
+
+  // Repopulate if the page already exists (e.g. called after init or a rebuild).
+  if (ui.about_name) {
+    lv_label_set_text(ui.about_name, s_abtName.c_str());
+    lv_label_set_text(ui.about_version, (String("v") + s_abtVersion).c_str());
+    lv_label_set_text(ui.about_build, s_abtBuild.c_str());
+    if (ui.about_qr) lv_qrcode_update(ui.about_qr, s_abtUrl.c_str(), s_abtUrl.length());
+  }
 }
 
 void LvglUI::showBootSplash(const char* version, const char* date, const char* commit,

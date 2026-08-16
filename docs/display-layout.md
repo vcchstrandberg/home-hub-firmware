@@ -196,29 +196,17 @@ Three full-screen cards rotate every 5 seconds. Each card has a 16×16 Open Icon
 
 ## TFT — Waveshare ESP32-S3-LCD-2.8 (non-touch)
 
-240×320 stock ST7789 panel driven by Arduino_GFX + LVGL 8.4 — see `src/lvgl_ui_s3.cpp`. This board has **no touch panel**, and testing showed no other input on it makes a page-swipe substitute practical, so unlike the C6 Touch LCD's 3-page carousel (dashboard / forecast / about), this board has **no paging at all**: indoor, outdoor, rain, and tomorrow's forecast are all laid out at once in a single 2×2 grid that rebuilds (same grid shape, recomputed cell sizes) when the accelerometer detects landscape vs portrait. There is no About page and no header bar — just the four cards, edge to edge with a 2 px margin/gap.
+240×320 stock ST7789 panel driven by Arduino_GFX + LVGL 8.4 — see `src/lvgl_ui_s3.cpp`. This board has **no touch panel**. Until 2026-08-16 that meant no paging at all (indoor/outdoor/rain/forecast all shown at once in a single 2×2 grid); an external KY-040 rotary encoder wired to the board's header (see [wiring.md](wiring.md)) now drives a **four-page carousel**, mirroring the C6 Touch LCD's swipe-driven pages but with one extra page since rain rolls into "Outside" instead of getting a fifth always-on card:
 
-**Landscape (320×240):**
+1. **Inside** — one big indoor card (name, temp, unit, humidity), filling nearly the whole screen.
+2. **Outside** — outdoor temp/pressure card (with the high-pressure sun icon) stacked above a rain card (1h/24h, droplet indicator).
+3. **Weather** — tomorrow's forecast: title, drawn weather icon, hi/lo temps, precipitation.
+4. **About** — app name, version, build info, and a QR code linking to the repo (new on this board).
 
-```
- x=0                            x=157                       x=320
- ┌─────────────────────────────┬───────────────────────────────┐  y=2
- │ INNE (amber #FFA726)        │ UTE (blue #4FC3F7)            │
- │                             │                               │
- │ 24.7 C                      │ 18.5 C                        │  cell ~157×138
- │                             │                               │
- │ Fukt: 41%                   │ Tryck: 1028hPa            ☀   │
- ├─────────────────────────────┼───────────────────────────────┤  y=142
- │ REGN                        │ TOMORROW                      │
- │ 1h: 0.0mm                   │  (icon)  9 / 3 C              │  cell ~157×82
- │ 24h: 0.0mm                  │  REGN: 1.2mm                  │
- └─────────────────────────────┴───────────────────────────────┘  y=224
-```
-
-**Portrait (240×320):** same 2×2 composition, cells recomputed as ~118×157 each, indoor/outdoor on top and rain/forecast on the bottom — no separate portrait-specific drawing code, `buildDashboard()` in `src/lvgl_ui_s3.cpp` computes cell geometry from `s_gfx->width()/height()` at build time rather than hardcoding two layouts.
+Encoder rotation advances/retreats one page per detent; the encoder's built-in push button cycles locale. Same 30 s auto-return-to-page-0 timeout as the C6 board if there's no input. Page-indicator dots (4, muted/white) sit in a reserved bottom band on every page, same chrome as the C6 board's carousel. All four pages are built by `buildPages()` from the panel's actual width/height, so the same code produces both landscape (320×240) and portrait (240×320) — no separate per-orientation layout functions, matching this board's existing "compute from `s_gfx->width()/height()`" approach.
 
 **Palette:** identical tokens to the C6 Touch LCD board above (`COL_BG`, `COL_CARD_BG`, `COL_INDOOR_ACC`, `COL_OUTDOOR_ACC`, `COL_RAIN_BG`, `COL_MUTED`, `COL_DETAIL`, `COL_ERROR_BG`, plus `COL_SUN`/`COL_CLOUD` for the sun icon and forecast weather icons) — see `src/lvgl_ui_s3.cpp` for the hex values.
 
-**Modal overlays:** same boot splash / connecting / locale / error overlays as the C6 board, full-screen, no page-indicator dots (there being nothing to indicate — this board has one screen).
+**Modal overlays:** same boot splash / connecting / locale / error overlays as the C6 board, full-screen, drawn on top of whichever page is active.
 
 **Orientation:** QMI8658 on I2C SDA=11/SCL=10 (addr 0x6B, same chip and address as the C6 board). This board's IMU is mounted rotated 90° relative to the C6's, so `rotationFromAccel()` in `src/orientation.cpp` swaps the X/Y axis roles for this target — confirmed against real hardware.

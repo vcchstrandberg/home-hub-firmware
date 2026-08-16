@@ -103,7 +103,7 @@ The Uno R4's I2C is on the dedicated SDA/SCL pins (A4/A5 on the edge connector).
 
 ## Waveshare ESP32-S3-LCD-2.8 (non-touch)
 
-**No external wiring needed.** Display and IMU are integrated on the board, powered and programmed over USB-C. This is the non-touch variant — "ESP32-S3-Touch-LCD-2.8" is a different board with a CST328/CST3530 touch chip.
+**Display and IMU need no external wiring** — both are integrated on the board, powered and programmed over USB-C. This is the non-touch variant — "ESP32-S3-Touch-LCD-2.8" is a different board with a CST328/CST3530 touch chip. Since 2026-08-16 an **external KY-040 rotary encoder** is wired to the board's header (see below) to drive page navigation.
 
 **Pin assignments** (from the official `ESP32-S3-LCD-2.8-Demo.zip` Arduino example):
 
@@ -118,11 +118,16 @@ The Uno R4's I2C is on the dedicated SDA/SCL pins (A4/A5 on the edge connector).
 | IMU I2C SDA | 11 | Shared bus, QMI8658 only (no touch controller on this bus) |
 | IMU I2C SCL | 10 | |
 | IMU I2C addr | `0x6B` | QMI8658 — same address as the C6 Touch LCD board |
-| BOOT button | 0 | Only physical input this firmware uses |
+| BOOT button | 0 | Locale short-press, same as the other boards' BOOT/GPIO9 buttons |
+| Encoder CLK | 18 | External KY-040, `INPUT_PULLUP` |
+| Encoder DT | 15 | External KY-040, `INPUT_PULLUP` |
+| Encoder SW | 43 | External KY-040's built-in push button, `INPUT_PULLUP` |
 
-The board also exposes a second "PWR_KEY" button (GPIO6) with a power-latch control pin (GPIO7) and a battery ADC (GPIO8) — **none of this is wired up**. An earlier revision repurposed PWR_KEY as a page-advance button, but testing showed the device has no good way to shift screens, so the firmware instead shows current conditions and tomorrow's forecast on one always-visible screen (see [display-layout.md](display-layout.md)). GPIO7 is left alone because this firmware assumes permanent USB power, same as every other target in the fleet.
+The board also exposes a second "PWR_KEY" button (GPIO6) with a power-latch control pin (GPIO7) and a battery ADC (GPIO8) — **none of this is wired up**. GPIO7 is left alone because this firmware assumes permanent USB power, same as every other target in the fleet.
 
-**Locale input:** built-in **BOOT button (GPIO0)** only — no touch, no swipe.
+**Rotary encoder wiring.** This board's 12-pin header only breaks out two GPIOs Waveshare's own docs label "Spare GPIO pin" (18, 15) plus TXD/RXD (43, 44) — everything else on that header is GND/5V/3V3/USB-D±/I2C, already spoken for. TXD (GPIO43) is safe to reuse as the encoder's SW pin because this firmware already routes `Serial` over native USB (`ARDUINO_USB_CDC_ON_BOOT=1` below), not UART0, so nothing else uses it. Wire the KY-040 module's `+`/`GND` to the header's 3V3/GND pins, then CLK→GPIO18, DT→GPIO15, SW→GPIO43. An earlier revision of this board tried repurposing the onboard PWR_KEY button (GPIO6) as a page-advance stand-in and found "the device has no good way to shift screens" without a proper rotary input — the external encoder is what made paging practical here, see [display-layout.md](display-layout.md).
+
+**Locale input:** built-in **BOOT button (GPIO0)**, or the encoder's own push button (GPIO43) — either works independently.
 
 **Orientation:** the QMI8658 accelerometer detects landscape vs portrait and triggers a layout rebuild — no hardware setup needed. Its physical mounting is rotated 90° relative to the C6 board's IMU, so `src/orientation.cpp` uses a different axis mapping for this target (see the `WAVESHARE_ESP32S3_LCD` branch of `rotationFromAccel()`).
 
