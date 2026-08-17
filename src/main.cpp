@@ -319,25 +319,51 @@ void toggleAbout();
 
 #ifdef HAS_ENCODER
 // ── Rotary encoder (KY-040) quadrature decode ───────────────────────────────
-// Full 4x-resolution state-machine decode, read from an ISR on both CLK and
-// DT so no transition is missed regardless of loop()'s ~100 ms cadence.
-// ENCODER_STATE_TABLE is indexed by (prevState << 2 | currState) where each
-// state is (CLK<<1 | DT); it yields -1/0/+1 per valid quarter-step, and a
-// KY-040 detent is 4 quarter-steps. g_encAccum collects raw quarter-steps;
-// loop() consumes whole detents from it and clears the remainder.
-static const int8_t ENCODER_STATE_TABLE[16] = {
-   0, -1,  1,  0,
-   1,  0,  0, -1,
-  -1,  0,  0,  1,
-   0,  1, -1,  0,
+// Ben Buxton's classic debounce-tolerant state machine (MIT-licensed, widely
+// used — see e.g. github.com/buxtronix/arduino/tree/master/libraries/Rotary).
+// The first cut here (v1) just counted raw quarter-steps and divided by 4,
+// which turned out too sensitive to mechanical contact bounce: a bounced or
+// out-of-sequence transition could eat or add a quarter-step, so a real
+// click sometimes needed an extra nudge to register, or occasionally
+// double-fired — reported as "sometimes ignored, sometimes delayed" after
+// wiring the encoder up (2026-08-17). This table instead requires the full
+// 4-transition Gray-code sequence before emitting a direction at all; any
+// out-of-sequence read (bounce) just falls back to R_START harmlessly
+// instead of corrupting a running count.
+#define ENC_DIR_CW     0x10
+#define ENC_DIR_CCW    0x20
+#define ENC_R_START     0x0
+#define ENC_R_CW_FINAL  0x1
+#define ENC_R_CW_BEGIN  0x2
+#define ENC_R_CW_NEXT   0x3
+#define ENC_R_CCW_BEGIN 0x4
+#define ENC_R_CCW_FINAL 0x5
+#define ENC_R_CCW_NEXT  0x6
+
+// Rows = current state, columns = pin reading (CLK<<1 | DT), 0-3.
+static const uint8_t ENCODER_STATE_TABLE[7][4] = {
+  { ENC_R_START,    ENC_R_CW_BEGIN,  ENC_R_CCW_BEGIN, ENC_R_START },
+  { ENC_R_CW_NEXT,  ENC_R_START,     ENC_R_CW_FINAL,  ENC_R_START | ENC_DIR_CW },
+  { ENC_R_CW_NEXT,  ENC_R_CW_BEGIN,  ENC_R_START,     ENC_R_START },
+  { ENC_R_CW_NEXT,  ENC_R_CW_BEGIN,  ENC_R_CW_FINAL,  ENC_R_START },
+  { ENC_R_CCW_NEXT, ENC_R_START,     ENC_R_CCW_BEGIN, ENC_R_START },
+  { ENC_R_CCW_NEXT, ENC_R_CCW_FINAL, ENC_R_START,     ENC_R_START | ENC_DIR_CCW },
+  { ENC_R_CCW_NEXT, ENC_R_CCW_FINAL, ENC_R_CCW_BEGIN, ENC_R_START },
 };
-static volatile uint8_t g_encState = 0;
-static volatile int16_t g_encAccum = 0;
+
+// Holds a state 0-6 between calls, transiently OR'd with a DIR_CW/DIR_CCW
+// bit the instant a full detent completes (masked off before the next
+// lookup — same pattern as the reference implementation).
+static volatile uint8_t g_encState   = ENC_R_START;
+// Signed count of completed clicks (not quarter-steps) since loop() last
+// drained it: +1 per confirmed CW detent, -1 per CCW.
+static volatile int16_t g_encDetents = 0;
 
 void IRAM_ATTR encoderISR() {
-  uint8_t curr = (digitalRead(ENCODER_CLK) << 1) | digitalRead(ENCODER_DT);
-  g_encState = ((g_encState << 2) | curr) & 0x0F;
-  g_encAccum += ENCODER_STATE_TABLE[g_encState];
+  uint8_t pinState = (digitalRead(ENCODER_CLK) << 1) | digitalRead(ENCODER_DT);
+  g_encState = ENCODER_STATE_TABLE[g_encState & 0x0F][pinState];
+  if (g_encState & ENC_DIR_CW)  g_encDetents++;
+  if (g_encState & ENC_DIR_CCW) g_encDetents--;
 }
 #endif
 
@@ -627,19 +653,20 @@ void loop()
     if (now - encBtnStart >= 40) cycleLocale();
   }
 
-  // Encoder rotation: g_encAccum is written from an ISR in raw quarter-steps
-  // (see encoderISR() above) — read-and-clear it with interrupts briefly
-  // disabled to avoid tearing, then consume whole detents (4 quarter-steps
-  // each) via onSwipe(), same page-cycling function the C6 board's touch
-  // swipe uses. Sign convention (which rotation direction is "next" page) is
-  // a best guess, unverified on real hardware — swap the two onSwipe() calls
-  // below if it turns out backwards.
+  // Encoder rotation: g_encDetents is a signed count of completed clicks,
+  // written from an ISR (see encoderISR() above) — read-and-clear it with
+  // interrupts briefly disabled to avoid tearing, then apply each detent via
+  // onSwipe(), same page-cycling function the C6 board's touch swipe uses.
+  // The pre-2026-08-17 decode (raw quarter-step accumulation) had its
+  // direction confirmed correct on real hardware, but this table-driven
+  // state machine is a different algorithm — re-check direction after
+  // flashing; swap the two onSwipe() calls below if it's now backwards.
   noInterrupts();
-  int16_t encDelta = g_encAccum;
-  g_encAccum = 0;
+  int16_t encDetents = g_encDetents;
+  g_encDetents = 0;
   interrupts();
-  while (encDelta >= 4)  { onSwipe(-1); encDelta -= 4; }
-  while (encDelta <= -4) { onSwipe(1);  encDelta += 4; }
+  while (encDetents > 0) { onSwipe(-1); encDetents--; }
+  while (encDetents < 0) { onSwipe(1);  encDetents++; }
 #endif
 
 #ifdef HAS_LED_MATRIX
