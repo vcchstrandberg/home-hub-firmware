@@ -1064,17 +1064,53 @@ void checkForFirmwareUpdate()
     binHttp.end();
     return;
   }
+  Serial.print("OTA: fetched HTTP 200, "); Serial.print(len); Serial.println(" bytes, writing...");
   if (!Update.begin(len)) {
     Serial.print("OTA: Update.begin failed: "); Serial.println(Update.errorString());
     binHttp.end();
     return;
   }
 
-  size_t written = Update.writeStream(*binHttp.getStreamPtr());
+  // Stream the download in bounded chunks with an explicit stall timeout,
+  // instead of one opaque Update.writeStream() call — a 2026-08-17 incident
+  // saw a download hang indefinitely (UI frozen on "Installing update", no
+  // serial output, no crash/reboot; only recovered by a power-cycle back to
+  // the previous slot, which the two-slot OTA scheme made safe) with
+  // nothing in the logs pointing at why. This gives periodic progress
+  // visibility and guarantees the loop can't hang forever again.
+  NetworkClient* stream = binHttp.getStreamPtr();
+  uint8_t buf[1024];
+  size_t written = 0;
+  unsigned long lastProgress = millis();
+  unsigned long lastLog = millis();
+  const unsigned long STALL_TIMEOUT_MS = 15000;
+  bool stalled = false;
+  while (written < (size_t)len) {
+    int avail = stream->available();
+    if (avail > 0) {
+      size_t toRead = (size_t)avail > sizeof(buf) ? sizeof(buf) : (size_t)avail;
+      size_t got = stream->readBytes(buf, toRead);
+      if (got > 0) {
+        Update.write(buf, got);
+        written += got;
+        lastProgress = millis();
+      }
+    } else if (millis() - lastProgress > STALL_TIMEOUT_MS) {
+      Serial.printf("OTA: stalled at %u/%d bytes, aborting\n", (unsigned)written, len);
+      stalled = true;
+      break;
+    } else {
+      delay(5);
+    }
+    if (millis() - lastLog > 2000) {
+      lastLog = millis();
+      Serial.printf("OTA: %u/%d bytes\n", (unsigned)written, len);
+    }
+  }
   binHttp.end();
-  if (written != (size_t)len) {
+  if (stalled || written != (size_t)len) {
     Serial.print("OTA: wrote "); Serial.print(written); Serial.print("/"); Serial.println(len);
-    recordFirmwareUpdateFailure(serverVersion, "incomplete transfer");
+    recordFirmwareUpdateFailure(serverVersion, stalled ? "download stalled" : "incomplete transfer");
     Update.abort();
     return;
   }
